@@ -38,18 +38,29 @@ Entry points:
 
 | Function | Auth | Effect |
 | --- | --- | --- |
-| `initialize(admin, payment_token)` | admin | one-time; sets default token + id counter |
-| `create_invoice(freelancer, client, amount, description, due_date)` | freelancer | records a `Pending` invoice, appends to history, emits `InvoiceCreated`, returns id |
-| `fund_invoice(invoice_id)` | client | atomic `token.transfer(client → freelancer)`, marks `Paid`, emits `InvoicePaid` |
+| `initialize(admin, payment_token)` | admin | one-time; sets default token + id counter; **admin has no post-init powers** |
+| `create_invoice(freelancer, client, amount, description, due_date)` | freelancer | rejects non-positive amounts, self-directed invoices, empty descriptions; records a `Pending` invoice, appends to history, emits `InvoiceCreated`, returns id |
+| `fund_invoice(invoice_id)` | client | pre-checks the client balance (typed `InsufficientBalance` error instead of an opaque token trap), then atomic `token.transfer(client → freelancer)`, marks `Paid`, emits `InvoicePaid` |
 | `release_funds(invoice_id)` | — | reserved seam for future held-escrow; no-op in the instant-release MVP |
 | `get_invoice(id)` / `get_invoice_history(freelancer)` | — (read) | reads |
 | `default_token_address()` / `version()` | — (read) | metadata |
 
 Errors are a typed `contracterror` enum (`NotInitialized`, `AlreadyInitialized`,
-`InvoiceNotFound`, `AlreadyPaid`, `InvalidAmount`). Seven unit tests in
-`contracts/invoice/src/test.rs` cover the create→fund→paid loop, history
-ordering, double-funding rejection, non-positive amounts, missing invoices,
-timestamps, and double-initialize.
+`InvoiceNotFound`, `AlreadyPaid`, `InvalidAmount`, and — appended after the
+v1 testnet deployment, keeping codes 1–5 wire-compatible —
+`InvalidDescription`, `InvalidParties`, `InsufficientBalance`).
+
+Eighteen unit tests in `contracts/invoice/src/test.rs` cover the
+create→fund→paid loop, history ordering and empty-history, double-funding
+rejection, non-positive amounts, missing invoices, timestamps,
+double-initialize, sequential id allocation, self-directed invoices, empty
+descriptions, exact vs. short client balances, and — without `mock_all_auths`
+— the authorization matrix (freelancer auth required to create, client auth
+required to fund, an impostor's auth rejected, no-auth rejections, and the
+exact token-transfer sub-authorization inside `fund_invoice`).
+
+Integrator-facing reference (entrypoints, arguments, auth, errors, events,
+storage, reuse notes): [../contracts/invoice/README.md](../contracts/invoice/README.md).
 
 ### Escrow model
 
@@ -113,11 +124,36 @@ Next.js 15 App Router, React 19, TypeScript, Tailwind. Key modules:
 - **Vercel Analytics** — `<Analytics />` in the root layout for page/usage
   tracking.
 
+## Known limitations (documented, intentional for testnet)
+
+- **Public activity feed reads by id-scan.** `/activity` (and the dashboard)
+  walk invoice ids `1..250`, simulating one `get_invoice` per id on the public
+  RPC. It works for the current invoice volume and does not depend on RPC event
+  retention, but the correct long-term primitive is consuming the contract's
+  `InvoiceCreated`/`InvoicePaid` events (topics index users for filtered
+  queries). `max` (250) bounds the scan so a large ledger cannot hang the UI.
+- **Faucet is a rate-limited test-token mint.** `/api/faucet` now serves
+  only deployments whose network passphrase is the SDF testnet passphrase
+  (returns 503 otherwise), and rate-limits each wallet to one mint per hour
+  (429 with the wait surfaced in the UI). It remains best-effort: the counter
+  is per warm serverless instance, not a global budget. Untouched premise: the
+  route mints a demo testnet asset and any deployment involving a real asset
+  must still remove or replace it.
+- **Read simulation source.** `web/lib/contract.ts` builds read simulations
+  over a fixed, well-known funded testnet account (`READ_SOURCE`). It is only
+  a simulation source: it never signs or funds anything, and reads are never
+  submitted to the network.
+
 ## Security notes
 
 - The faucet issuer secret (`USDC_ISSUER_SECRET`) lives only in server env and is
-  used exclusively by `/api/faucet`. It is never exposed to the client and the
-  route would be removed in a mainnet build.
+  used exclusively by `/api/faucet`. It is never exposed to the client (see the
+  faucet limitation above).
 - All contract writes require the acting party's `require_auth()`, enforced by
-  the contract, so the client can only be charged for an invoice they sign.
+  the contract and now *verified by tests* (the `MockAuth` tests in
+  `contracts/invoice/src/test.rs` confirm create requires freelancer auth and
+  fund requires client auth, with an impostor's auth rejected).
+- The UI displays invoice descriptions exactly as recorded on-chain; it does
+  not rewrite or soften the raw data (see `humanizeDescription` in
+  `web/lib/format.ts`).
 - No PII is stored; the only identifiers are public Stellar addresses.

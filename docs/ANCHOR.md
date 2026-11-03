@@ -4,17 +4,23 @@ PayLoop's `/withdraw` flow lets a freelancer convert USDC to Naira and send it
 to a bank account. In this MVP that flow is **mocked**. This document explains
 what the mock does and exactly what a production integration would replace.
 
-## What the mock does today
+## What is real vs. what is simulated
 
-- Reads the connected wallet's on-chain USDC balance.
-- Validates the requested amount against that balance.
-- Applies a fixed indicative rate (₦/USDC) and shows the payout amount.
-- Collects a bank + account number.
-- Simulates anchor settlement (a short delay) and returns a reference code.
+| Step in the `/withdraw` flow | Status | Notes |
+| --- | --- | --- |
+| Read the connected wallet's USDC balance | **Real** | Live Soroban RPC read of the on-chain token balance through `lib/contract.ts` |
+| Validate the requested amount against the balance | **Real** | Applied in the UI against that balance |
+| Indicative ₦/USDC rate + payout preview | **Real input, indicative output** | The balance is real; the FX rate is a fixed UI constant — no live rate feed |
+| Collect bank name + account number | **Real input** | Entered by the user; has **no** validated account behind it |
+| Anchor settlement (the delay) | **Simulated** | A client-side timer, not an anchor call |
+| Payout reference code | **Simulated** | Random string generated in the browser; not issued by an anchor |
+| Naira lands in the user's bank account | **Not implemented** | No funds leave the wallet, no SEP-24 transaction exists |
 
-No funds move on-chain and no bank transfer occurs. This keeps the end-to-end
-payout story demonstrable without holding a money-transmitter license or live
-anchor credentials.
+Nothing in this flow is bank-affecting. It is labeled "mocked" in the product UI
+wherever it appears.
+
+The on-chain side (invoice creation, USDC payment, balances) is entirely real —
+only the fiat leg is simulated.
 
 ## What production would look like (SEP-24)
 

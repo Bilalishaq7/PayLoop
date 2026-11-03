@@ -45,14 +45,10 @@ export function formatDate(unixSeconds: bigint | number): string {
   });
 }
 
-// A few historical invoices have placeholder raw descriptions baked into the
-// immutable contract; present a clean, human, work-description instead.
-const DESCRIPTION_LABELS: Record<string, string> = {
-  "test invoice from bot": "Mobile app development",
-  "bot pilot invoice": "Website design",
-};
-
+// Descriptions are displayed exactly as recorded on-chain. A few early demo
+// invoices carry placeholder text (e.g. "test invoice from bot") in the
+// immutable contract; we deliberately do NOT reword them into nicer copy in
+// the UI — what the contract recorded is what users see.
 export function humanizeDescription(desc?: string | null): string {
-  if (!desc) return desc ?? "";
-  return DESCRIPTION_LABELS[desc.trim().toLowerCase()] ?? desc;
+  return desc ?? "";
 }

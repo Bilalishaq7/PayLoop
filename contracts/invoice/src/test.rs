@@ -5,6 +5,10 @@ use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     token, Address, Env, String,
 };
+use soroban_sdk::{
+    testutils::{MockAuth, MockAuthInvoke},
+    IntoVal,
+};
 
 /// Deploys a token (Stellar Asset Contract) we control, mints `amount` to
 /// `to`, and returns the token address plus its admin client for minting.
@@ -174,4 +178,326 @@ fn timestamps_are_recorded() {
     s.contract.fund_invoice(&id);
     let inv = s.contract.get_invoice(&id);
     assert_eq!(inv.paid_at, 1_700_050_000);
+}
+
+// --- Authorization tests ---------------------------------------------------
+//
+// These do NOT use mock_all_auths: each test grants auth for specific parties
+// via MockAuth, so they actually verify that the contract calls require_auth
+// on the right address (and nothing else).
+
+struct AuthEnv {
+    env: Env,
+    contract: InvoiceContractClient<'static>,
+    contract_address: Address,
+    token: Address,
+    admin: Address,
+    freelancer: Address,
+    client: Address,
+}
+
+fn auth_setup() -> AuthEnv {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = sac.address();
+    let contract_address = env.register(InvoiceContract, ());
+    let contract = InvoiceContractClient::new(&env, &contract_address);
+    let freelancer = Address::generate(&env);
+    let client = Address::generate(&env);
+
+    // initialize requires the admin's auth; grant exactly that invoke.
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_address,
+            fn_name: "initialize",
+            args: (admin.clone(), token.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    contract.initialize(&admin, &token);
+
+    AuthEnv {
+        env,
+        contract,
+        contract_address,
+        token,
+        admin,
+        freelancer,
+        client,
+    }
+}
+
+#[test]
+fn create_invoice_succeeds_with_freelancer_auth() {
+    let a = auth_setup();
+    a.env.mock_auths(&[MockAuth {
+        address: &a.freelancer,
+        invoke: &MockAuthInvoke {
+            contract: &a.contract_address,
+            fn_name: "create_invoice",
+            args: (
+                a.freelancer.clone(),
+                a.client.clone(),
+                1_000_000i128,
+                String::from_str(&a.env, "job"),
+                0u64,
+            )
+                .into_val(&a.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    let id = a.contract.create_invoice(
+        &a.freelancer,
+        &a.client,
+        &1_000_000i128,
+        &String::from_str(&a.env, "job"),
+        &0u64,
+    );
+    assert_eq!(id, 1);
+}
+
+#[test]
+fn create_invoice_fails_without_freelancer_auth() {
+    let a = auth_setup();
+    // No auth at all: the freelancer's require_auth must fail the call.
+    let res = a.contract.try_create_invoice(
+        &a.freelancer,
+        &a.client,
+        &1_000_000i128,
+        &String::from_str(&a.env, "job"),
+        &0u64,
+    );
+    assert!(res.is_err());
+}
+
+#[test]
+fn create_invoice_rejects_impostor_auth() {
+    let a = auth_setup();
+    let impostor = Address::generate(&a.env);
+    // The impostor signs a create_invoice invoke, but the contract requires
+    // the *freelancer's* auth — a different address — so it must fail.
+    a.env.mock_auths(&[MockAuth {
+        address: &impostor,
+        invoke: &MockAuthInvoke {
+            contract: &a.contract_address,
+            fn_name: "create_invoice",
+            args: (
+                a.freelancer.clone(),
+                a.client.clone(),
+                1_000_000i128,
+                String::from_str(&a.env, "job"),
+                0u64,
+            )
+                .into_val(&a.env),
+            sub_invokes: &[],
+        },
+    }]);
+    let res = a.contract.try_create_invoice(
+        &a.freelancer,
+        &a.client,
+        &1_000_000i128,
+        &String::from_str(&a.env, "job"),
+        &0u64,
+    );
+    assert!(res.is_err());
+}
+
+fn mint_with_admin_auth(a: &AuthEnv, to: &Address, amount: i128) {
+    a.env.mock_auths(&[MockAuth {
+        address: &a.admin,
+        invoke: &MockAuthInvoke {
+            contract: &a.token,
+            fn_name: "mint",
+            args: (to.clone(), amount).into_val(&a.env),
+            sub_invokes: &[],
+        },
+    }]);
+    token::StellarAssetClient::new(&a.env, &a.token).mint(to, &amount);
+}
+
+#[test]
+fn fund_invoice_succeeds_with_client_auth() {
+    let a = auth_setup();
+    mint_with_admin_auth(&a, &a.client, 1_000_000);
+
+    // Create is not under test here, so notarize it via freelancer MockAuth.
+    a.env.mock_auths(&[MockAuth {
+        address: &a.freelancer,
+        invoke: &MockAuthInvoke {
+            contract: &a.contract_address,
+            fn_name: "create_invoice",
+            args: (
+                a.freelancer.clone(),
+                a.client.clone(),
+                1_000_000i128,
+                String::from_str(&a.env, "job"),
+                0u64,
+            )
+                .into_val(&a.env),
+            sub_invokes: &[],
+        },
+    }]);
+    let id = a.contract.create_invoice(
+        &a.freelancer,
+        &a.client,
+        &1_000_000i128,
+        &String::from_str(&a.env, "job"),
+        &0u64,
+    );
+
+    // fund_invoice requires the client's auth — once for the contract call and,
+    // because fund_invoice itself calls token.transfer (client → freelancer),
+    // again for the token transfer. mock_all_auths can't distinguish those;
+    // MockAuth with a sub_invoke expresses exactly what was authorized.
+    a.env.mock_auths(&[MockAuth {
+        address: &a.client,
+        invoke: &MockAuthInvoke {
+            contract: &a.contract_address,
+            fn_name: "fund_invoice",
+            args: (id,).into_val(&a.env),
+            sub_invokes: &[MockAuthInvoke {
+                contract: &a.token,
+                fn_name: "transfer",
+                args: (a.client.clone(), a.freelancer.clone(), 1_000_000i128).into_val(&a.env),
+                sub_invokes: &[],
+            }],
+        },
+    }]);
+    a.contract.fund_invoice(&id);
+
+    let token_client = token::Client::new(&a.env, &a.token);
+    assert_eq!(token_client.balance(&a.freelancer), 1_000_000i128);
+    assert_eq!(token_client.balance(&a.client), 0i128);
+}
+
+#[test]
+fn fund_invoice_fails_without_client_auth() {
+    let a = auth_setup();
+    mint_with_admin_auth(&a, &a.client, 1_000_000);
+
+    a.env.mock_auths(&[MockAuth {
+        address: &a.freelancer,
+        invoke: &MockAuthInvoke {
+            contract: &a.contract_address,
+            fn_name: "create_invoice",
+            args: (
+                a.freelancer.clone(),
+                a.client.clone(),
+                1_000_000i128,
+                String::from_str(&a.env, "job"),
+                0u64,
+            )
+                .into_val(&a.env),
+            sub_invokes: &[],
+        },
+    }]);
+    let id = a.contract.create_invoice(
+        &a.freelancer,
+        &a.client,
+        &1_000_000i128,
+        &String::from_str(&a.env, "job"),
+        &0u64,
+    );
+
+    // No client auth granted: fund must fail.
+    let res = a.contract.try_fund_invoice(&id);
+    assert!(res.is_err());
+
+    // The invoice must remain Pending and unfunded.
+    let inv = a.contract.get_invoice(&id);
+    assert_eq!(inv.status, InvoiceStatus::Pending);
+}
+
+// --- Edge case tests -------------------------------------------------------
+
+fn invoice_with_id(s: &Setup, freelancer: &Address, client: &Address, amount: i128) -> u64 {
+    s.contract.create_invoice(
+        freelancer,
+        client,
+        &amount,
+        &String::from_str(&s.env, "job"),
+        &0u64,
+    )
+}
+
+#[test]
+fn create_invoice_ids_increment() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    let a = invoice_with_id(&s, &freelancer, &client, 1_000_000);
+    let b = invoice_with_id(&s, &freelancer, &client, 1_000_000);
+    let c = invoice_with_id(&s, &freelancer, &client, 1_000_000);
+    assert_eq!((a, b, c), (1, 2, 3));
+}
+
+#[test]
+fn rejects_self_directed_invoice() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let res = s.contract.try_create_invoice(
+        &freelancer,
+        &freelancer,
+        &1_000_000i128,
+        &String::from_str(&s.env, "job"),
+        &0u64,
+    );
+    assert_eq!(res, Err(Ok(Error::InvalidParties)));
+}
+
+#[test]
+fn rejects_empty_description() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    let res = s.contract.try_create_invoice(
+        &freelancer,
+        &client,
+        &1_000_000i128,
+        &String::from_str(&s.env, ""),
+        &0u64,
+    );
+    assert_eq!(res, Err(Ok(Error::InvalidDescription)));
+}
+
+#[test]
+fn funding_whole_balance_succeeds_exactly() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    s.token_admin.mint(&client, &1_000_000i128);
+    let id = invoice_with_id(&s, &freelancer, &client, 1_000_000);
+    s.contract.fund_invoice(&id);
+    let token_client = token::Client::new(&s.env, &s.token);
+    assert_eq!(token_client.balance(&freelancer), 1_000_000i128);
+    assert_eq!(token_client.balance(&client), 0i128);
+}
+
+#[test]
+fn funding_short_balance_errors() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    s.token_admin.mint(&client, &500_000i128);
+    let id = invoice_with_id(&s, &freelancer, &client, 1_000_000);
+    let res = s.contract.try_fund_invoice(&id);
+    assert_eq!(res, Err(Ok(Error::InsufficientBalance)));
+    // Unchanged state after the failed attempt.
+    let inv = s.contract.get_invoice(&id);
+    assert_eq!(inv.status, InvoiceStatus::Pending);
+    assert_eq!(s.contract.get_invoice_history(&freelancer).len(), 1);
+}
+
+#[test]
+fn history_for_unknown_freelancer_is_empty() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    invoice_with_id(&s, &freelancer, &client, 1_000_000);
+    let stranger = Address::generate(&s.env);
+    let history = s.contract.get_invoice_history(&stranger);
+    assert_eq!(history.len(), 0);
 }

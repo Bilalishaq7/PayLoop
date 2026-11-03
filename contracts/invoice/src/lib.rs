@@ -7,6 +7,9 @@
 //! client to the freelancer (instant release). `release_funds` is kept in the
 //! ABI as the seam for future milestone/held-escrow flows, where funds would be
 //! parked in the contract until a release trigger fires.
+//!
+//! Full developer documentation (lifecycle, auth matrix, errors, events, and
+//! integration examples) lives in `contracts/invoice/README.md`.
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
@@ -44,6 +47,11 @@ pub enum Error {
     InvoiceNotFound = 3,
     AlreadyPaid = 4,
     InvalidAmount = 5,
+    // Codes 6+ are appended after the original deployment; existing codes keep
+    // their wire encoding, so a deployed v1 contract stays compatible.
+    InvalidDescription = 6,
+    InvalidParties = 7,
+    InsufficientBalance = 8,
 }
 
 #[contracttype]
@@ -87,6 +95,10 @@ pub struct InvoiceContract;
 impl InvoiceContract {
     /// One-time setup. `payment_token` is the default token (test USDC SAC on
     /// testnet) used when an invoice does not specify its own token.
+    ///
+    /// Deliberate design decisions: the admin has **no post-initialization
+    /// power** (no rotation, no pausing, no recovery), and the default token is
+    /// immutable after init — a redeploy is the intended upgrade path.
     pub fn initialize(env: Env, admin: Address, payment_token: Address) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
@@ -102,6 +114,16 @@ impl InvoiceContract {
 
     /// Register a new invoice on-chain. Only the freelancer being credited can
     /// create their own invoice. Returns the new invoice id.
+    ///
+    /// # Arguments
+    /// - `freelancer` — address credited on the invoice; must authorize.
+    /// - `client` — address expected to pay; must differ from `freelancer`.
+    /// - `amount` — payable amount in base units of the default token; must be > 0.
+    /// - `description` — non-empty work description recorded on-chain.
+    /// - `due_date` — Unix seconds, informational (not enforced).
+    ///
+    /// # Errors
+    /// `NotInitialized`, `InvalidAmount`, `InvalidParties`, `InvalidDescription`.
     pub fn create_invoice(
         env: Env,
         freelancer: Address,
@@ -114,6 +136,12 @@ impl InvoiceContract {
         freelancer.require_auth();
         if amount <= 0 {
             return Err(Error::InvalidAmount);
+        }
+        if freelancer == client {
+            return Err(Error::InvalidParties);
+        }
+        if description.is_empty() {
+            return Err(Error::InvalidDescription);
         }
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1);
@@ -161,6 +189,15 @@ impl InvoiceContract {
     /// Client pays the invoice. Requires the client's auth and atomically
     /// transfers `amount` of the invoice token from the client straight to the
     /// freelancer (instant release), then marks the invoice Paid.
+    ///
+    /// Idempotency: once `Paid`, further attempts revert with `AlreadyPaid`, so
+    /// double payment is impossible at the contract level.
+    ///
+    /// # Arguments
+    /// - `invoice_id` — id returned by `create_invoice`.
+    ///
+    /// # Errors
+    /// `InvoiceNotFound`, `AlreadyPaid`, `InsufficientBalance`.
     pub fn fund_invoice(env: Env, invoice_id: u64) -> Result<(), Error> {
         let mut invoice: Invoice = env
             .storage()
@@ -174,8 +211,16 @@ impl InvoiceContract {
 
         invoice.client.require_auth();
 
-        let client = token::Client::new(&env, &invoice.token);
-        client.transfer(&invoice.client, &invoice.freelancer, &invoice.amount);
+        let token_client = token::Client::new(&env, &invoice.token);
+        // Advisory pre-check so a short client balance fails with a typed
+        // contract error instead of an opaque token-contract trap. The transfer
+        // below remains the authoritative check.
+        let balance = token_client.balance(&invoice.client);
+        if balance < invoice.amount {
+            return Err(Error::InsufficientBalance);
+        }
+
+        token_client.transfer(&invoice.client, &invoice.freelancer, &invoice.amount);
 
         let now = env.ledger().timestamp();
         invoice.status = InvoiceStatus::Paid;
@@ -199,6 +244,13 @@ impl InvoiceContract {
     /// Reserved for the milestone/held-escrow roadmap. In the MVP instant-release
     /// model funds already moved to the freelancer during `fund_invoice`, so this
     /// is a no-op that simply confirms the invoice is settled.
+    ///
+    /// In the deployed v1 design this function performs **no state change and no
+    /// funds movement**. It exists so a future held-escrow model can reuse the
+    /// entrypoint name without an interface break. Callers that depend on it
+    /// doing anything today are integrating the wrong contract version; a
+    /// future redeploy with milestone escrow must re-initialize a new contract
+    /// instance.
     pub fn release_funds(env: Env, invoice_id: u64) -> Result<(), Error> {
         let invoice: Invoice = env
             .storage()

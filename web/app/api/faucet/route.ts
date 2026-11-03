@@ -15,18 +15,50 @@ import {
 
 const MINT_AMOUNT = 5_000_000_000n; // 500 USDC at 7 decimals
 
+// Testnet-only guard: the faucet mints a demo asset and must never serve a
+// deployment configured against a real-value network (e.g. PUBLIC). The
+// passphrase comes from NEXT_PUBLIC_NETWORK_PASSPHRASE, the same config the
+// rest of the app runs on.
+const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
+
+// Best-effort rate limiting. Serverless instances (Vercel) do not share
+// memory, so this caps per-wallet mints per warm instance rather than
+// globally — enough to stop rapid re-taps in the intended demo flow, with the
+// real answer for a stricter budget being an external store (see
+// docs/ARCHITECTURE.md). Address -> timestamp of last successful mint.
+const RATE_WINDOW_MS = 60 * 60 * 1000; // one mint per wallet per hour
+const lastMintByAddress = new Map<string, number>();
+
+function rateLimited(address: string): number | null {
+  const now = Date.now();
+  // Periodically drop expired entries so the map cannot grow unbounded.
+  for (const [addr, ts] of lastMintByAddress) {
+    if (now - ts > RATE_WINDOW_MS) lastMintByAddress.delete(addr);
+  }
+  const last = lastMintByAddress.get(address);
+  if (last === undefined) return null;
+  const remainingMs = RATE_WINDOW_MS - (now - last);
+  return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : null;
+}
+
 export async function POST(req: Request) {
   const issuerSecret = process.env.USDC_ISSUER_SECRET;
   const tokenId = process.env.NEXT_PUBLIC_TOKEN_ID;
   const rpcUrl =
     process.env.NEXT_PUBLIC_RPC_URL ?? "https://soroban-testnet.stellar.org";
   const passphrase =
-    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ??
-    "Test SDF Network ; September 2015";
+    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? TESTNET_PASSPHRASE;
 
   if (!issuerSecret || !tokenId) {
     return NextResponse.json(
       { error: "Faucet is not configured on the server." },
+      { status: 503 }
+    );
+  }
+
+  if (passphrase !== TESTNET_PASSPHRASE) {
+    return NextResponse.json(
+      { error: "Faucet is available on testnet only." },
       { status: 503 }
     );
   }
@@ -41,6 +73,18 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: "A valid wallet address is required." },
       { status: 400 }
+    );
+  }
+
+  const retryAfterSeconds = rateLimited(address);
+  if (retryAfterSeconds !== null) {
+    return NextResponse.json(
+      {
+        error: `Faucet already dispensed to this wallet recently. Try again in ${Math.ceil(
+          retryAfterSeconds / 60
+        )} minute(s).`,
+      },
+      { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } }
     );
   }
 
@@ -95,6 +139,7 @@ export async function POST(req: Request) {
       );
     }
 
+    lastMintByAddress.set(address, Date.now());
     return NextResponse.json({ ok: true, hash: sent.hash });
   } catch (e: any) {
     return NextResponse.json(

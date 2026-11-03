@@ -39,8 +39,8 @@ driven by the user feedback collected in Level 4.
 - **On-chain activity snapshot (point-in-time, 2026-08-12):**
   [docs/testnet-traction.csv](docs/testnet-traction.csv) — 42 invoices
   on-chain, 34 Paid. This is a committed snapshot, not a live figure; for the
-  current on-chain count (43 invoices, 35 Paid as of this writing), see the
-  live [Activity page](https://pay-loop-neon.vercel.app/activity).
+  current on-chain count, see the live
+  [Activity page](https://pay-loop-neon.vercel.app/activity).
 
 ### Feedback collection & Excel export
 
@@ -98,7 +98,58 @@ Mapped requirement-by-requirement in [SUBMISSION.md](SUBMISSION.md).
 - **Feedback** — in-app widget → `/api/feedback` (forwards to an optional webhook).
 - **Anchor off-ramp** — USDC → Naira bank payout is **mocked** for this submission with clear UX and a documented integration path. See [docs/ANCHOR.md](docs/ANCHOR.md).
 
-Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Contract-level integrator reference (entrypoints, auth matrix, errors, events, integration code): [contracts/invoice/README.md](contracts/invoice/README.md).
+
+### Soroban architecture at a glance
+
+- **The contract is the only database.** Invoice state lives in two persistent
+  storage keys per freelancer (`Invoice(id)` records and a per-freelancer
+  `History` index) plus three instance keys set once at `initialize` (admin,
+  default token, id counter). There is no application backend holding state.
+- **Two-state lifecycle:** `Pending → Paid`, transitioned atomically inside
+  `fund_invoice` together with the client→freelancer token transfer (instant
+  release — the contract never custodies funds). Double payment is impossible
+  (`AlreadyPaid`), and a short client balance fails with a typed
+  `InsufficientBalance` error instead of an opaque token trap.
+- **Authorization is minimal and verified:** only the freelancer being credited
+  can create their invoice, only the named client can fund it, and no admin
+  power exists after one-time initialization. Authorization enforcement is
+  covered by `MockAuth` tests (impostor and no-auth rejections).
+- **Events for indexers:** `InvoiceCreated` and `InvoicePaid` emit
+  freelancer/client as topics, so off-chain indexers can watch addresses
+  directly instead of scanning invoices.
+
+## What PayLoop contributes to the Stellar ecosystem
+
+Ecosystem relevance beyond the product itself:
+
+1. **A reusable, token-agnostic invoice/escrow contract.** The payment token is
+   chosen at `initialize`, invoices store the token they were created with, and
+   the instant-release escrow pattern is documented for reuse —
+   [contracts/invoice/README.md](contracts/invoice/README.md) ships the
+   lifecycle, storage model, auth matrix, error codes, event schema, build/test
+   commands and copy-paste TypeScript/CLI integration examples against the live
+   testnet deployment.
+2. **A reusable authorization-test pattern.** `contracts/invoice/src/test.rs`
+   pairs standard `mock_all_auths` convenience tests with `MockAuth`-verified
+   tests that prove exactly which party must sign each write (including the
+   nested token-transfer authorization inside `fund_invoice`) — a technique
+   other Soroban teams can copy for their own `require_auth` coverage.
+3. **Practical testnet-SAC lessons in the open.** The repo documents and
+   implements the friction points of using an issued asset on Soroban testnet:
+   in-app trustline management via `changeTrust` (Freighter's asset UI is
+   unreliable across versions), a server-side faucet pattern with the issuer
+   secret kept server-only, and the reason `ed25519-dalek` is pinned against a
+   `soroban-env-host` testutils break (`contracts/invoice/Cargo.toml`).
+4. **Contract CI that builds the real artifact.** Every push to `contracts/`
+   runs fmt/clippy/tests and uploads the optimized `wasm32v1-none` WASM as a
+   CI artifact — the deployable build is verifiable, not just claimed.
+
+Known limitations are documented, not hidden: the testnet-only faucet (now
+rate-limited per wallet, though best-effort on serverless), the id-scan
+activity feed (correct long-term primitive would be the contract events), and
+the unbounded growth of the per-freelancer history read — all in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the contract README.
 
 ## Features
 
@@ -157,20 +208,18 @@ GitHub Actions runs on every push and pull request
 
 ## Screenshots & demo
 
+The four proof-critical shots:
+
 | | |
 | --- | --- |
-| **Landing** | **Dashboard** |
-| ![Landing](docs/screenshots/landing.png) | ![Dashboard](docs/screenshots/dashboard.png) |
-| **Create invoice (with templates)** | **Payment — paid** |
-| ![Create invoice with templates](docs/screenshots/create.png) | ![Payment paid](docs/screenshots/pay.png) |
-| **On-chain activity** | **Mobile** |
-| ![Activity](docs/screenshots/activity.png) | ![Mobile](docs/screenshots/mobile.jpeg) |
-| **Template picker** | **Help / FAQ** |
-| ![Template picker](docs/screenshots/template-picker.png) | ![Help / FAQ](docs/screenshots/help.png) |
-| **Monitoring (Sentry)** | |
-| ![Monitoring](docs/screenshots/analytics.png) | |
+| **Dashboard** (balance, invoices, faucet, reminders) | **Payment — paid** (explorer tx link) |
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Payment paid](docs/screenshots/pay.png) |
+| **On-chain activity** (unique-wallet stats, proof of interactions) | **Create invoice** (templates + preview) |
+| ![Activity](docs/screenshots/activity.png) | ![Create invoice with templates](docs/screenshots/create.png) |
 
-More in [docs/screenshots/](docs/screenshots/) — see
+The full index (landing, preview, history, feedback, tour, mobile, analytics,
+monitoring, light theme) is the **single canonical list** maintained in
+[docs/screenshots/README.md](docs/screenshots/README.md) — see also
 [docs/GROWTH.md](docs/GROWTH.md) for the full feedback → shipped trace.
 
 **Watch the 🎬 [demo video](https://www.loom.com/share/0b08c1208df841ac96ecd61b2b05a7a9)** for the full create → pay → on-chain loop. The demo-video script, onboarding
@@ -215,6 +264,7 @@ PayLoop/
 ├── .github/workflows/         CI (contract + web) and CD (Vercel) pipelines
 ├── contracts/
 │   ├── invoice/               Soroban invoice/escrow contract (Rust) + tests
+│   │   └── README.md          Integrator reference: lifecycle, auth, errors, events, examples
 │   ├── DEPLOYMENT.md          Testnet deploy + token setup steps
 │   └── deployment.testnet.json
 ├── scripts/
@@ -235,6 +285,8 @@ PayLoop/
 │   ├── testnet-traction.csv   On-chain invoice activity snapshot
 │   ├── pitch/                 PayLoop-Pitch-Deck.pptx
 │   └── screenshots/           Submission screenshots
+├── CONTRIBUTING.md            How to report bugs and submit PRs
+├── AUDIT.md                   Maintainer-criteria audit + remediation trace
 ├── DEMO.md                    Demo-video + user-onboarding checklist
 └── README.md
 ```
@@ -244,6 +296,9 @@ PayLoop/
 - **MVP (this):** single invoice, shareable pay link, instant release on fund, on-chain history.
 - **Next:** live USDC↔Naira anchor off-ramp, milestone-based escrow (deposit + final), on-chain reputation score, recurring/retainer invoices, multi-stablecoin, agency batch payouts.
 
-## License
+## Contributing & license
 
-MIT
+- Bugs and feature requests: open an issue; see [CONTRIBUTING.md](CONTRIBUTING.md)
+  for what to include and the review process. Security reports: private security
+  advisory per [SECURITY.md](SECURITY.md).
+- [MIT licensed](LICENSE).

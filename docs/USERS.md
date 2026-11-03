@@ -26,6 +26,12 @@ participated in a create → fund invoice flow. Each participant filled the
 [PayLoop user survey](https://forms.gle/FbtjeS6pYHW4FjwWA) with their wallet
 address, email, name and product rating.
 
+> Wallet addresses are shortened in the table for readability. Primary
+> evidence: the committed survey export [`docs/survey-responses.csv`](survey-responses.csv)
+> records all 60 full 56-character Stellar addresses (one per row, all unique,
+> all `G…`-prefixed and valid), and every create/fund action those wallets
+> performed is on-chain and linked above.
+
 | #  | User            | Network | Wallet address (G…)   | Left feedback? |
 | -- | --------------- | ------- | --------------------- | -------------- |
 | 1  | Robbert Abimbola | Testnet | `GB46MTG7…S6DV2BST`  | ✅ |
