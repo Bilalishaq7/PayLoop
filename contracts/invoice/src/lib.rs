@@ -61,6 +61,7 @@ enum DataKey {
     NextId,
     Invoice(u64),
     History(Address),
+    ClientHistory(Address),
 }
 
 // Events -------------------------------------------------------------------
@@ -175,6 +176,16 @@ impl InvoiceContract {
             .persistent()
             .set(&DataKey::History(freelancer.clone()), &history);
 
+        let mut client_history: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClientHistory(client.clone()))
+            .unwrap_or(Vec::new(&env));
+        client_history.push_back(id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ClientHistory(client.clone()), &client_history);
+
         InvoiceCreated {
             freelancer,
             client,
@@ -277,6 +288,57 @@ impl InvoiceContract {
             .storage()
             .persistent()
             .get(&DataKey::History(freelancer))
+            .unwrap_or(Vec::new(&env));
+        let mut out: Vec<Invoice> = Vec::new(&env);
+        for id in ids.iter() {
+            if let Some(inv) = env.storage().persistent().get(&DataKey::Invoice(id)) {
+                out.push_back(inv);
+            }
+        }
+        out
+    }
+
+    /// Returns the total number of invoices ever created (the next invoice id).
+    pub fn invoice_count(env: Env) -> Result<u64, Error> {
+        env.storage()
+            .instance()
+            .get(&DataKey::NextId)
+            .ok_or(Error::NotInitialized)
+    }
+
+    /// Paginated read of invoices for a freelancer. Returns up to `len` invoices
+    /// starting at index `start` (0-indexed), oldest first.
+    pub fn get_invoice_range(
+        env: Env,
+        freelancer: Address,
+        start: u32,
+        len: u32,
+    ) -> Vec<Invoice> {
+        let ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::History(freelancer))
+            .unwrap_or(Vec::new(&env));
+        
+        let start_idx = start as usize;
+        let len_val = len as usize;
+        let mut out: Vec<Invoice> = Vec::new(&env);
+        let end_idx = (start_idx + len_val).min(ids.len() as usize);
+        
+        for i in start_idx..end_idx {
+            if let Some(inv) = env.storage().persistent().get(&DataKey::Invoice(ids.get(i as u32).unwrap())) {
+                out.push_back(inv);
+            }
+        }
+        out
+    }
+
+    /// All invoices owed by a client (payer), oldest first.
+    pub fn get_client_history(env: Env, client: Address) -> Vec<Invoice> {
+        let ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClientHistory(client))
             .unwrap_or(Vec::new(&env));
         let mut out: Vec<Invoice> = Vec::new(&env);
         for id in ids.iter() {
