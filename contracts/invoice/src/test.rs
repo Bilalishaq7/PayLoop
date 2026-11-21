@@ -501,3 +501,107 @@ fn history_for_unknown_freelancer_is_empty() {
     let history = s.contract.get_invoice_history(&stranger);
     assert_eq!(history.len(), 0);
 }
+
+// --- Pagination and counter tests -------------------------------------------
+
+#[test]
+fn invoice_count_returns_next_id() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // After initialize, count is 1 (next id to be assigned).
+    let count = s.contract.invoice_count();
+    assert_eq!(count, 1);
+
+    invoice_with_id(&s, &freelancer, &client, 1_000_000);
+    let count = s.contract.invoice_count();
+    assert_eq!(count, 2);
+
+    invoice_with_id(&s, &freelancer, &client, 2_000_000);
+    let count = s.contract.invoice_count();
+    assert_eq!(count, 3);
+}
+
+#[test]
+fn get_invoice_range_respects_bounds() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // Create 5 invoices for the freelancer.
+    for i in 1..=5 {
+        invoice_with_id(&s, &freelancer, &client, 1_000_000i128 * i);
+    }
+
+    // Get first 2 invoices (start=0, len=2).
+    let range = s.contract.get_invoice_range(&freelancer, &0, &2);
+    assert_eq!(range.len(), 2);
+    assert_eq!(range.get(0).unwrap().id, 1);
+    assert_eq!(range.get(1).unwrap().id, 2);
+
+    // Get next 2 invoices (start=2, len=2).
+    let range = s.contract.get_invoice_range(&freelancer, &2, &2);
+    assert_eq!(range.len(), 2);
+    assert_eq!(range.get(0).unwrap().id, 3);
+    assert_eq!(range.get(1).unwrap().id, 4);
+
+    // Get from start=4, len=2 (only 1 invoice left).
+    let range = s.contract.get_invoice_range(&freelancer, &4, &2);
+    assert_eq!(range.len(), 1);
+    assert_eq!(range.get(0).unwrap().id, 5);
+
+    // Get from start beyond end (empty).
+    let range = s.contract.get_invoice_range(&freelancer, &5, &2);
+    assert_eq!(range.len(), 0);
+}
+
+#[test]
+fn get_invoice_range_for_unknown_freelancer_is_empty() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    let stranger = Address::generate(&s.env);
+
+    invoice_with_id(&s, &freelancer, &client, 1_000_000);
+
+    // Stranger has no invoices.
+    let range = s.contract.get_invoice_range(&stranger, &0, &10);
+    assert_eq!(range.len(), 0);
+}
+
+#[test]
+fn get_client_history_tracks_invoices_owed() {
+    let s = setup();
+    let freelancer1 = Address::generate(&s.env);
+    let freelancer2 = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // Client owes freelancer1 for 2 invoices.
+    invoice_with_id(&s, &freelancer1, &client, 1_000_000);
+    invoice_with_id(&s, &freelancer1, &client, 2_000_000);
+
+    // Client owes freelancer2 for 1 invoice.
+    invoice_with_id(&s, &freelancer2, &client, 3_000_000);
+
+    // Get client's history.
+    let history = s.contract.get_client_history(&client);
+    assert_eq!(history.len(), 3);
+    assert_eq!(history.get(0).unwrap().id, 1);
+    assert_eq!(history.get(1).unwrap().id, 2);
+    assert_eq!(history.get(2).unwrap().id, 3);
+}
+
+#[test]
+fn get_client_history_for_unknown_client_is_empty() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    let stranger = Address::generate(&s.env);
+
+    invoice_with_id(&s, &freelancer, &client, 1_000_000);
+
+    // Stranger hasn't been charged for anything.
+    let history = s.contract.get_client_history(&stranger);
+    assert_eq!(history.len(), 0);
+}
