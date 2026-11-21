@@ -247,7 +247,7 @@ The user-feedback summary (60 responses, avg 5.2/6) is in
 
 ## Local development
 
-Prerequisites: Node 20+, Rust + `stellar` CLI (`cargo install --locked stellar-cli`).
+Prerequisites: Node 22+, Rust + `stellar` CLI (`cargo install --locked stellar-cli`).
 
 ```bash
 # Contract
