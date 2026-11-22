@@ -7,6 +7,7 @@ import { ConnectPrompt } from "@/components/ConnectPrompt";
 import { Alert, EmptyState, Spinner, StatusBadge } from "@/components/ui";
 import { ScanStatus } from "@/components/ScanStatus";
 import { InvoicePreview } from "@/components/InvoiceDocument";
+import { ShareMenu } from "@/components/ShareMenu";
 import type { Invoice } from "@/lib/contract";
 import { useInvoiceScan } from "@/lib/use-invoice-scan";
 import {
@@ -17,7 +18,6 @@ import {
 } from "@/lib/format";
 import { getTokenConfig, isConfigured } from "@/lib/config";
 import { TokenAmount } from "@/components/TokenAmount";
-import { useTokenMeta } from "@/lib/use-token-meta";
 
 type StatusFilter = "all" | "Pending" | "Paid";
 type RoleFilter = "all" | "freelancer" | "client";
@@ -237,7 +237,7 @@ export default function HistoryPage() {
                     PDF
                   </button>
                   {inv.status === "Pending" && (
-                    <CopyReminderButton invoice={inv} />
+                    <ShareMenu invoice={inv} buttonClassName="btn-ghost text-xs" />
                   )}
                 </div>
               </div>
@@ -256,37 +256,4 @@ export default function HistoryPage() {
   );
 }
 
-// Copies a ready-to-send payment reminder message to the clipboard. Covers the
-// Level-4 "payment reminders" feedback request.
-function CopyReminderButton({ invoice }: { invoice: Invoice }) {
-  const [copied, setCopied] = useState(false);
-  const token = useTokenMeta(invoice.token);
 
-  async function remind() {
-    const url =
-      typeof window !== "undefined"
-        ? `${window.location.origin}/pay/${invoice.id}`
-        : `/pay/${invoice.id}`;
-    const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
-      invoice.amount,
-      token.decimals,
-    )} ${token.symbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${url}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      window.location.href = `/pay/${invoice.id}`;
-    }
-  }
-
-  return (
-    <button
-      onClick={remind}
-      className="btn-ghost text-xs"
-      title="Copy payment reminder"
-    >
-      {copied ? "Copied ✓" : "Remind"}
-    </button>
-  );
-}
