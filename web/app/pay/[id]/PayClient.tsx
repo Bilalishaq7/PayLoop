@@ -38,7 +38,7 @@ import { trackEvent } from "@/lib/analytics";
 import { useAsyncResource } from "@/lib/use-async-resource";
 
 export default function PayClient({ id }: { id: string }) {
-  const { address, connect, connecting } = useWallet();
+  const { address, connect, connecting, wrongNetwork } = useWallet();
   const [balance, setBalance] = useState<bigint | null>(null);
   const [paying, setPaying] = useState(false);
   // Errors from actions on this page (paying, copying). Load errors come from
@@ -377,7 +377,8 @@ export default function PayClient({ id }: { id: string }) {
                 )}
                 <button
                   onClick={pay}
-                  disabled={paying || insufficient}
+                  disabled={paying || insufficient || wrongNetwork}
+                  title={wrongNetwork ? "Switch Freighter to Testnet first" : undefined}
                   className="btn-primary w-full"
                 >
                   {paying ? (
