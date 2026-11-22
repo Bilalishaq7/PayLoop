@@ -7,14 +7,16 @@ import { InvoiceCard } from "@/components/InvoiceCard";
 import { Alert, EmptyState, Spinner } from "@/components/ui";
 import { getInvoiceHistory, getTokenBalance, type Invoice } from "@/lib/contract";
 import { formatAmount, humanizeDescription } from "@/lib/format";
-import { config, isConfigured } from "@/lib/config";
+import { isConfigured, tokens } from "@/lib/config";
 import { FaucetButton } from "@/components/FaucetButton";
 import { TrustlineButton } from "@/components/TrustlineButton";
+import { TokenAmount } from "@/components/TokenAmount";
+import { useTokenMeta } from "@/lib/use-token-meta";
 
 export default function DashboardPage() {
   const { address, connect, connecting } = useWallet();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [balance, setBalance] = useState<bigint | null>(null);
+  const [balances, setBalances] = useState<Record<string, bigint>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,13 +25,18 @@ export default function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [hist, bal] = await Promise.all([
-        getInvoiceHistory(address),
-        getTokenBalance(address),
-      ]);
+      const hist = await getInvoiceHistory(address);
+      const bals = await Promise.all(
+        tokens.map((t) => getTokenBalance(address, t.id).catch(() => null))
+      );
       // Newest first.
       setInvoices([...hist].reverse());
-      setBalance(bal);
+      const next: Record<string, bigint> = {};
+      tokens.forEach((t, i) => {
+        const value = bals[i];
+        if (value !== null) next[t.id] = value;
+      });
+      setBalances(next);
     } catch (e: any) {
       setError(e?.message ?? "Failed to load your invoices.");
     } finally {
@@ -64,12 +71,8 @@ export default function DashboardPage() {
     );
   }
 
-  const paidTotal = invoices
-    .filter((i) => i.status === "Paid")
-    .reduce((acc, i) => acc + i.amount, 0n);
-  const pendingTotal = invoices
-    .filter((i) => i.status === "Pending")
-    .reduce((acc, i) => acc + i.amount, 0n);
+  const paidTotals = totalsByToken(invoices, "Paid");
+  const pendingTotals = totalsByToken(invoices, "Pending");
   const pending = invoices.filter((i) => i.status === "Pending");
   const nowMs = Date.now();
   const overdue = pending.filter(
@@ -91,24 +94,25 @@ export default function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="card">
           <p className="text-sm text-slate-400">Wallet balance</p>
-          <p className="mt-1 text-2xl font-bold">
-            {balance === null ? "—" : formatAmount(balance)}{" "}
-            <span className="text-base text-slate-400">
-              {config.tokenSymbol}
-            </span>
-          </p>
+          {tokens.map((t) => (
+            <p key={t.id} className="mt-1 text-2xl font-bold">
+              {balances[t.id] === undefined ? "—" : (
+                <TokenAmount
+                  amount={balances[t.id] ?? 0n}
+                  tokenId={t.id}
+                  symbolClassName="text-base text-slate-400"
+                />
+              )}
+            </p>
+          ))}
         </div>
         <div className="card">
           <p className="text-sm text-slate-400">Received (paid)</p>
-          <p className="mt-1 text-2xl font-bold text-emerald-300">
-            {formatAmount(paidTotal)}
-          </p>
+          <TokenTotals totals={paidTotals} tone="text-emerald-300" />
         </div>
         <div className="card">
           <p className="text-sm text-slate-400">Awaiting payment</p>
-          <p className="mt-1 text-2xl font-bold text-amber-300">
-            {formatAmount(pendingTotal)}
-          </p>
+          <TokenTotals totals={pendingTotals} tone="text-amber-300" />
         </div>
       </div>
 
@@ -121,7 +125,9 @@ export default function DashboardPage() {
         </Alert>
       )}
 
-      <TrustlineButton onDone={load} />
+      {tokens.map((t) => (
+        <TrustlineButton key={t.id} tokenId={t.id} onDone={load} />
+      ))}
 
       {pending.length > 0 && (
         <RemindersCard pending={pending} overdueCount={overdue.length} />
@@ -172,6 +178,36 @@ export default function DashboardPage() {
 
 // Quick-action card for unpaid invoices: one click copies a reminder message
 // per pending invoice (Level-4 feedback: "payment reminders").
+function totalsByToken(invoices: Invoice[], status: Invoice["status"]) {
+  const totals = new Map<string, bigint>();
+  for (const inv of invoices) {
+    if (inv.status !== status) continue;
+    totals.set(inv.token, (totals.get(inv.token) ?? 0n) + inv.amount);
+  }
+  return totals;
+}
+
+function TokenTotals({
+  totals,
+  tone,
+}: {
+  totals: Map<string, bigint>;
+  tone: string;
+}) {
+  if (totals.size === 0) {
+    return <p className={`mt-1 text-2xl font-bold ${tone}`}>0</p>;
+  }
+  return (
+    <>
+      {[...totals].map(([tokenId, amount]) => (
+        <p key={tokenId} className={`mt-1 text-2xl font-bold ${tone}`}>
+          <TokenAmount amount={amount} tokenId={tokenId} />
+        </p>
+      ))}
+    </>
+  );
+}
+
 function RemindersCard({
   pending,
   overdueCount,
@@ -179,25 +215,6 @@ function RemindersCard({
   pending: Invoice[];
   overdueCount: number;
 }) {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  async function remind(inv: Invoice) {
-    const url =
-      typeof window !== "undefined"
-        ? `${window.location.origin}/pay/${inv.id}`
-        : `/pay/${inv.id}`;
-    const text = `Hi! You have an outstanding PayLoop invoice #${inv.id} for ${formatAmount(
-      inv.amount
-    )} ${config.tokenSymbol} (${humanizeDescription(inv.description) || "no description"}). Please pay it here: ${url}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedId(inv.id);
-      setTimeout(() => setCopiedId(null), 2000);
-    } catch {
-      window.location.href = url;
-    }
-  }
-
   return (
     <div className="card space-y-3">
       <div className="flex items-center justify-between">
@@ -216,16 +233,42 @@ function RemindersCard({
       </div>
       <div className="flex flex-wrap gap-2">
         {pending.map((inv) => (
-          <button
-            key={inv.id}
-            onClick={() => remind(inv)}
-            className="btn-ghost text-xs"
-            title="Copy a reminder message to send to your client"
-          >
-            {copiedId === inv.id ? "Copied ✓" : `Remind #${inv.id}`}
-          </button>
+          <RemindButton key={inv.id} invoice={inv} />
         ))}
       </div>
     </div>
+  );
+}
+
+function RemindButton({ invoice }: { invoice: Invoice }) {
+  const [copied, setCopied] = useState(false);
+  const token = useTokenMeta(invoice.token);
+
+  async function remind() {
+    const url =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/pay/${invoice.id}`
+        : `/pay/${invoice.id}`;
+    const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
+      invoice.amount,
+      token.decimals
+    )} ${token.symbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${url}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      window.location.href = url;
+    }
+  }
+
+  return (
+    <button
+      onClick={remind}
+      className="btn-ghost text-xs"
+      title="Copy a reminder message to send to your client"
+    >
+      {copied ? "Copied ✓" : `Remind #${invoice.id}`}
+    </button>
   );
 }

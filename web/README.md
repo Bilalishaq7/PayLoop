@@ -32,7 +32,8 @@ You'll need the [Freighter](https://freighter.app) browser extension set to
 | --- | --- | --- |
 | `NEXT_PUBLIC_CONTRACT_ID` | public | Invoice contract address |
 | `NEXT_PUBLIC_TOKEN_ID` | public | Test USDC Stellar Asset Contract |
-| `NEXT_PUBLIC_TOKEN_DECIMALS` | public | Token decimals (7) |
+| `NEXT_PUBLIC_TOKEN_DECIMALS` | public | Default token decimals (7); actual values are read from each token contract |
+| `NEXT_PUBLIC_TOKENS` | public | Optional JSON array of extra allowlisted tokens: `[{"id":"C…","issuer":"G…","symbol":"USDY","decimals":6}]`. The default token is always included. Its `symbol`/`decimals` are public fallbacks; the current values come from the token contract. |
 | `NEXT_PUBLIC_RPC_URL` | public | Soroban RPC endpoint |
 | `NEXT_PUBLIC_NETWORK_PASSPHRASE` | public | Network passphrase |
 | `USDC_ISSUER_SECRET` | **server only** | Issuer secret key for the test-USDC faucet. Never prefix with `NEXT_PUBLIC`. |
@@ -44,7 +45,7 @@ Testnet defaults for the public vars are baked into `.env.example`.
 ## Routes
 
 - `/` — landing page
-- `/create` — freelancer creates an invoice (signs one tx)
+- `/create` — freelancer creates an invoice in the default or another allowlisted token (signs one tx)
 - `/dashboard` — freelancer's invoices, balances, test-USDC faucet
 - `/pay/[id]` — client-facing payment page; funds the invoice in one click
 - `/withdraw` — mocked USDC→Naira off-ramp

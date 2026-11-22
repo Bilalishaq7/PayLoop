@@ -11,12 +11,12 @@ import {
   fundInvoice,
   getInvoice,
   getTokenBalance,
-  hasUsdcTrustline,
+  hasTokenTrustline,
   type Invoice,
 } from "@/lib/contract";
 import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
 import { config, isConfigured } from "@/lib/config";
-import { buildReminderMessage, isInvoiceOwner } from "@/lib/invoice-helpers";
+import { useTokenMeta } from "@/lib/use-token-meta";
 
 export default function PayClient({ id }: { id: string }) {
   const { address, connect, connecting } = useWallet();
@@ -35,6 +35,7 @@ export default function PayClient({ id }: { id: string }) {
   // enabled the trustline, the transfer fails on-chain (Error #13), so we gate
   // the Pay button on this and show a clear message instead.
   const [freelancerReady, setFreelancerReady] = useState<boolean | null>(null);
+  const token = useTokenMeta(invoice?.token);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,25 +58,29 @@ export default function PayClient({ id }: { id: string }) {
     load();
   }, [load]);
 
-  // Check the freelancer (recipient) can receive USDC whenever the invoice loads.
+  // Check the freelancer (recipient) can receive this token whenever the
+  // invoice loads — the required trustline depends on the invoice's token.
   useEffect(() => {
     if (!invoice) {
       setFreelancerReady(null);
       return;
     }
-    hasUsdcTrustline(invoice.freelancer)
+    hasTokenTrustline(invoice.freelancer, invoice.token)
       .then(setFreelancerReady)
       .catch(() => setFreelancerReady(null));
   }, [invoice, paidHash]);
 
   useEffect(() => {
-    if (!address) {
+    if (!address || !invoice) {
       setTrusted(null);
+      setBalance(null);
       return;
     }
-    getTokenBalance(address).then(setBalance).catch(() => {});
-    hasUsdcTrustline(address).then(setTrusted).catch(() => setTrusted(null));
-  }, [address, paidHash]);
+    getTokenBalance(address, invoice.token).then(setBalance).catch(() => {});
+    hasTokenTrustline(address, invoice.token)
+      .then(setTrusted)
+      .catch(() => setTrusted(null));
+  }, [address, invoice, paidHash]);
 
   async function copyToClipboard(kind: "link" | "reminder", text: string) {
     try {
@@ -101,7 +106,7 @@ export default function PayClient({ id }: { id: string }) {
       if (raw.includes("trustline entry is missing")) {
         setFreelancerReady(false);
         setError(
-          `The freelancer hasn't enabled ${config.tokenSymbol} yet, so they can't receive this payment. Ask them to enable it, then try again.`
+          `The freelancer hasn't enabled ${token.symbol} yet, so they can't receive this payment. Ask them to enable it, then try again.`
         );
       } else {
         setError(raw || "Payment failed.");
@@ -173,9 +178,9 @@ export default function PayClient({ id }: { id: string }) {
         </div>
         <div className="text-center">
           <div className="text-4xl font-bold">
-            {formatAmount(invoice.amount)}
+            {formatAmount(invoice.amount, token.decimals)}
           </div>
-          <div className="mt-1 text-slate-400">{config.tokenSymbol}</div>
+          <div className="mt-1 text-slate-400">{token.symbol}</div>
         </div>
 
         <div className="space-y-2 rounded-lg bg-ink-900/60 p-4 text-sm">
@@ -194,8 +199,8 @@ export default function PayClient({ id }: { id: string }) {
           <Alert kind="success">
             <p className="font-semibold">Payment complete 🎉</p>
             <p className="mt-1">
-              {formatAmount(invoice.amount)} {config.tokenSymbol} was sent to the
-              freelancer.
+              {formatAmount(invoice.amount, token.decimals)} {token.symbol} was
+              sent to the freelancer.
             </p>
             {paidHash && (
               <p className="mt-1">
@@ -288,22 +293,24 @@ export default function PayClient({ id }: { id: string }) {
                 Connect that wallet to pay it.
               </Alert>
             ) : trusted === false ? (
-              <TrustlineButton onDone={() => setTrusted(true)} />
+              <TrustlineButton
+                tokenId={invoice.token}
+                onDone={() => setTrusted(true)}
+              />
             ) : freelancerReady === false ? (
               <Alert kind="info">
                 <p className="font-semibold">
-                  This freelancer can&apos;t receive {config.tokenSymbol} yet.
+                  This freelancer can&apos;t receive {token.symbol} yet.
                 </p>
                 <p className="mt-1">
                   {shortAddress(invoice.freelancer)} needs to enable{" "}
-                  {config.tokenSymbol} on their dashboard before this invoice can
-                  be paid. Ask them to open PayLoop, connect this wallet, and tap
-                  &ldquo;Enable {config.tokenSymbol}&rdquo; — then refresh this
-                  page.
+                  {token.symbol} before this invoice can be paid. Ask them to
+                  open PayLoop, connect this wallet, and enable the token — then
+                  refresh this page.
                 </p>
                 <button
                   onClick={() =>
-                    hasUsdcTrustline(invoice.freelancer)
+                    hasTokenTrustline(invoice.freelancer, invoice.token)
                       .then(setFreelancerReady)
                       .catch(() => {})
                   }
@@ -317,20 +324,24 @@ export default function PayClient({ id }: { id: string }) {
                 {insufficient && (
                   <Alert kind="info">
                     <p>
-                      Your balance is {formatAmount(balance ?? 0n)}{" "}
-                      {config.tokenSymbol}, but this invoice is for{" "}
-                      {formatAmount(invoice.amount)} {config.tokenSymbol}. Grab
-                      test {config.tokenSymbol} to continue:
+                      Your balance is {formatAmount(balance ?? 0n, token.decimals)}{" "}
+                      {token.symbol}, but this invoice is for{" "}
+                      {formatAmount(invoice.amount, token.decimals)} {token.symbol}.
+                      {invoice.token === config.tokenId
+                        ? " Grab test tokens to continue:"
+                        : ` Grab ${token.symbol} from its issuer to continue:`}
                     </p>
-                    <div className="mt-2">
-                      <FaucetButton
-                        onDone={() =>
-                          getTokenBalance(address)
-                            .then(setBalance)
-                            .catch(() => {})
-                        }
-                      />
-                    </div>
+                    {invoice.token === config.tokenId && (
+                      <div className="mt-2">
+                        <FaucetButton
+                          onDone={() =>
+                            getTokenBalance(address, invoice.token)
+                              .then(setBalance)
+                              .catch(() => {})
+                          }
+                        />
+                      </div>
+                    )}
                   </Alert>
                 )}
                 <button
@@ -343,7 +354,7 @@ export default function PayClient({ id }: { id: string }) {
                       <Spinner /> Paying…
                     </>
                   ) : (
-                    `Pay ${formatAmount(invoice.amount)} ${config.tokenSymbol}`
+                    `Pay ${formatAmount(invoice.amount, token.decimals)} ${token.symbol}`
                   )}
                 </button>
                 <p className="text-center text-xs text-slate-500">

@@ -3,9 +3,10 @@
 A self-contained **Soroban invoice + instant-release escrow** contract written
 with `soroban-sdk` 27. Any Stellar dApp that needs "request a payment, have it
 settled atomically on-chain, keep an on-chain record of paid invoices" can reuse
-it as-is: it is not tied to PayLoop's frontend, and the payment token is
-configured per-deployment (it works with any token contract, including SACs for
-issued assets such as USDC).
+it as-is: it is not tied to PayLoop's frontend. A default payment token is set
+per deployment, and additional allowlisted tokens can be chosen per invoice
+(it works with any token contract, including SACs for issued assets such as
+USDC).
 
 Deployed testnet instance (v1 WASM): see the addresses table in the root
 [README](../../README.md) and
@@ -41,8 +42,9 @@ no funds movement** — do not build against it.
 
 | Key | Storage kind | Set by | Purpose |
 | --- | --- | --- | --- |
-| `Admin` | instance | `initialize` | initializer address; **not read after init** (no admin powers by design) |
-| `DefaultToken` | instance | `initialize` | token contract used for every invoice; immutable after init |
+| `Admin` | instance | `initialize` | initializer address; only used to authorize growing the allowlist |
+| `DefaultToken` | instance | `initialize` | token contract used when `create_invoice` is called; immutable after init |
+| `AllowedTokens` | instance | `initialize`, `add_allowed_token` | tokens an invoice may be created with; entries are never removed |
 | `NextId` | instance | `create_invoice` | monotonically increasing invoice counter starting at 1 |
 | `Invoice(id)` | persistent | `create_invoice`, `fund_invoice` | the full `Invoice` record |
 | `History(freelancer)` | persistent | `create_invoice` | per-freelancer ordered list of invoice ids |
@@ -59,18 +61,28 @@ once.
 | Function | Caller must authorize | Arguments | Returns | Emits |
 | --- | --- | --- | --- | --- |
 | `initialize` | `admin` | `admin`, `payment_token` | `()` | — |
+| `add_allowed_token` | `admin` | `admin`, `token` | `()` | — |
 | `create_invoice` | `freelancer` | `freelancer`, `client`, `amount` (i128), `description`, `due_date` (u64) | `u64` invoice id | `InvoiceCreated` |
+| `create_invoice_with_token` | `freelancer` | `freelancer`, `client`, `amount` (i128), `description`, `due_date` (u64), `token` | `u64` invoice id | `InvoiceCreated` |
 | `fund_invoice` | `invoice.client` | `invoice_id` | `()` | `InvoicePaid` |
 | `release_funds` | — (inert in v1) | `invoice_id` | `()` | — |
 | `get_invoice` | read-only | `invoice_id` | `Invoice` | — |
 | `get_invoice_history` | read-only | `freelancer` | `Vec<Invoice>` | — |
 | `default_token_address` | read-only | — | token `Address` | — |
+| `get_allowed_tokens` | read-only | — | `Vec<Address>` | — |
 | `version` | read-only | — | `"v1"` symbol | — |
 
 Semantics worth knowing:
 
 - Only the **freelancer being credited** can create an invoice, so nobody can
   forge an invoice in someone else's payment history.
+- `create_invoice` keeps the original five-argument ABI and uses the default
+  token. `create_invoice_with_token` stores an explicit allowlisted token on the
+  invoice; `fund_invoice` always transfers that stored token, never a global
+  default.
+- The allowlist only grows: removing a token would make existing unpaid
+  invoices unfundable. The admin can add tokens but cannot rotate, pause, or
+  recover funds.
 - Funding always moves the **invoice amount that was recorded at creation**;
   the payer cannot pay a different amount and the freelancer cannot change the
   amount after creation.
@@ -95,8 +107,9 @@ Semantics worth knowing:
 | 6 | `InvalidDescription` | empty `description` |
 | 7 | `InvalidParties` | `freelancer == client` |
 | 8 | `InsufficientBalance` | client's token balance below `invoice.amount` at fund time (advisory pre-check; the token transfer remains the authoritative check) |
+| 9 | `TokenNotAllowed` | `create_invoice_with_token` called with a token outside the allowlist |
 
-Codes 6–8 were appended after the original testnet deployment, so v1 wire
+Codes 6–9 were appended after the original testnet deployment, so v1 wire
 encodings of codes 1–5 are unchanged.
 
 ## Events
@@ -187,14 +200,33 @@ stellar contract invoke --id CONTRACT_ID --source deployer --network testnet \
   -- get_invoice --invoice_id 1
 ```
 
+## Multi-token setup and v1 migration notes
+
+A fresh deployment sets the allowlist to the default token during
+`initialize`. To invoice in another stablecoin, the admin first calls
+`add_allowed_token(admin, token)` once per token, then freelancers use
+`create_invoice_with_token`. The frontend reads `get_allowed_tokens` (falling
+back to `NEXT_PUBLIC_TOKENS` on v1 deployments) for its token selector, reads
+`symbol()`/`decimals()` from each token, and needs each SAC's classic asset
+issuer in `NEXT_PUBLIC_TOKENS` to build trustlines.
+
+Existing v1 invoices need no migration: their `Invoice.token` was already
+stored at creation and `fund_invoice` has always used that field. They remain
+fundable on the new deployment as long as their token is in the allowlist (the
+default token always is). Because there is no in-place upgrade, point clients
+at the new contract address and keep reading old invoices from the old
+contract, or replay their records off-chain; do not assume old ids exist in the
+new instance. Encoding of `Invoice` and of error codes 1–8 is unchanged.
+
 ## Reuse notes
 
 - **Token choice**: `initialize(admin, payment_token)` accepts any Soroban
-  token contract address (SAC or custom). The invoice stores the token it was
-  created with; funding uses that token.
+  token contract address (SAC or custom) as the default. Additional tokens are
+  opt-in via `add_allowed_token`; every invoice stores the token it was created
+  with and funding uses that token.
 - **Decimals**: the contract is decimal-agnostic; amounts are raw `i128` base
-  units. Your UI handles human conversion (see `web/lib/format.ts` for a
-  bigint 7-decimal example).
+  units. Your UI handles human conversion using each token's `decimals()`
+  entrypoint (see `web/lib/contract.ts` and `web/lib/format.ts`).
 - **What you'd extend for a real escrow**: replace instant release with
   `deposit` into the contract + `release_funds(invoice_id)` gated on a trigger,
   and add a `Refunded`/`Disputed` status on the enum. Renaming the enum's

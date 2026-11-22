@@ -5,10 +5,10 @@ import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
 import { Alert, Spinner, TxLink } from "@/components/ui";
 import { InvoicePreview } from "@/components/InvoiceDocument";
-import { createInvoice } from "@/lib/contract";
+import { createInvoice, getAllowedTokenIds } from "@/lib/contract";
 import { toBaseUnits } from "@/lib/format";
-import { dueDateError, todayDateInputValue } from "@/lib/invoice-helpers";
-import { config, isConfigured } from "@/lib/config";
+import { config, getTokenConfig, isConfigured, tokens } from "@/lib/config";
+import { useTokenMeta } from "@/lib/use-token-meta";
 import {
   BUILTIN_TEMPLATES,
   deleteCustomTemplate,
@@ -37,8 +37,26 @@ export default function CreatePage() {
     loadCustomTemplates()
   );
   const [templateName, setTemplateName] = useState("");
+  const [tokenId, setTokenId] = useState(config.tokenId);
+  const [availableTokens, setAvailableTokens] = useState(() => tokens);
+  const token = useTokenMeta(tokenId);
 
   const configured = isConfigured();
+
+  useEffect(() => {
+    let active = true;
+    getAllowedTokenIds()
+      .then((ids) => {
+        if (!active) return;
+        const merged = ids.map((id) => getTokenConfig(id));
+        setAvailableTokens(merged);
+        if (ids.length > 0 && !ids.includes(tokenId)) setTokenId(ids[0]);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [tokenId]);
 
   function validate(): string | null {
     if (!client.startsWith("G") || client.length !== 56) {
@@ -88,8 +106,8 @@ export default function CreatePage() {
             id: "—",
             freelancer: address ?? "",
             client,
-            token: config.tokenId,
-            amount: toBaseUnits(amount),
+            token: tokenId,
+            amount: toBaseUnits(amount, token.decimals),
             description: description.trim(),
             dueDate: dueDate
               ? BigInt(Math.floor(new Date(dueDate).getTime() / 1000))
@@ -99,7 +117,7 @@ export default function CreatePage() {
             paidAt: 0n,
           }
         : null,
-    [client, amount, description, dueDate, address]
+    [client, amount, description, dueDate, address, tokenId, token.decimals]
   );
 
   function openPreview() {
@@ -136,9 +154,10 @@ export default function CreatePage() {
       const res = await createInvoice({
         freelancer: address,
         client,
-        amount: toBaseUnits(amount),
+        amount: toBaseUnits(amount, token.decimals),
         description: description.trim(),
         dueDate: dueUnix,
+        token: tokenId,
       });
       setResult(res);
       setClient("");
@@ -168,7 +187,7 @@ export default function CreatePage() {
         <h1 className="text-2xl font-bold">New invoice</h1>
         <p className="mt-1 text-sm text-slate-400">
           You are the freelancer. The invoice is recorded on-chain and your
-          client funds it in {config.tokenSymbol}.
+          client funds it in the token you choose below.
         </p>
       </div>
 
@@ -299,9 +318,33 @@ export default function CreatePage() {
             />
           </div>
 
+          {availableTokens.length > 1 && (
+            <div>
+              <label className="label" htmlFor="token">
+                Payment token
+              </label>
+              <select
+                id="token"
+                className="input"
+                value={tokenId}
+                onChange={(e) => setTokenId(e.target.value)}
+              >
+                {availableTokens.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {getTokenConfig(t.id).symbol}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Only tokens allowed by the contract can be selected. This
+                choice is fixed once the invoice is created.
+              </p>
+            </div>
+          )}
+
           <div>
             <label className="label" htmlFor="amount">
-              Amount ({config.tokenSymbol})
+              Amount ({token.symbol})
             </label>
             <input
               id="amount"

@@ -9,7 +9,9 @@ import { InvoicePreview } from "@/components/InvoiceDocument";
 import type { Invoice } from "@/lib/contract";
 import { useInvoiceScan } from "@/lib/use-invoice-scan";
 import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
-import { config, isConfigured } from "@/lib/config";
+import { getTokenConfig, isConfigured } from "@/lib/config";
+import { TokenAmount } from "@/components/TokenAmount";
+import { useTokenMeta } from "@/lib/use-token-meta";
 
 type StatusFilter = "all" | "Pending" | "Paid";
 type RoleFilter = "all" | "freelancer" | "client";
@@ -55,7 +57,7 @@ export default function HistoryPage() {
           i.freelancer.toLowerCase().includes(q) ||
           i.client.toLowerCase().includes(q) ||
           counterparty.toLowerCase().includes(q) ||
-          formatAmount(i.amount).includes(q) ||
+          formatAmount(i.amount, getTokenConfig(i.token).decimals).includes(q) ||
           humanizeDescription(i.description).toLowerCase().includes(q)
         );
       })
@@ -207,12 +209,7 @@ export default function HistoryPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold">
-                    {formatAmount(inv.amount)}{" "}
-                    <span className="text-xs font-normal text-slate-400">
-                      {config.tokenSymbol}
-                    </span>
-                  </span>
+                  <TokenAmount amount={inv.amount} tokenId={inv.token} className="font-semibold" />
                   <Link
                     href={`/pay/${inv.id}`}
                     className="btn-ghost text-xs"
@@ -251,6 +248,7 @@ export default function HistoryPage() {
 // Level-4 "payment reminders" feedback request.
 function CopyReminderButton({ invoice }: { invoice: Invoice }) {
   const [copied, setCopied] = useState(false);
+  const token = useTokenMeta(invoice.token);
 
   async function remind() {
     const url =
@@ -258,8 +256,9 @@ function CopyReminderButton({ invoice }: { invoice: Invoice }) {
         ? `${window.location.origin}/pay/${invoice.id}`
         : `/pay/${invoice.id}`;
     const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
-      invoice.amount
-    )} ${config.tokenSymbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${url}`;
+      invoice.amount,
+      token.decimals
+    )} ${token.symbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${url}`;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);

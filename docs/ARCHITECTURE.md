@@ -38,17 +38,19 @@ Entry points:
 
 | Function                                                            | Auth       | Effect                                                                                                                                                                                  |
 | ------------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `initialize(admin, payment_token)`                                  | admin      | one-time; sets default token + id counter; **admin has no post-init powers**                                                                                                            |
-| `create_invoice(freelancer, client, amount, description, due_date)` | freelancer | rejects non-positive amounts, self-directed invoices, empty descriptions; records a `Pending` invoice, appends to history, emits `InvoiceCreated`, returns id                           |
+| `initialize(admin, payment_token)`                                  | admin      | one-time; sets default token, allowlist and id counter; admin can only grow the allowlist afterwards                                                                                    |
+| `add_allowed_token(admin, token)`                                   | admin      | adds a token to the allowlist (append-only)                                                                                                                                              |
+| `create_invoice(freelancer, client, amount, description, due_date)` | freelancer | default-token variant; rejects non-positive amounts, self-directed invoices, empty descriptions; records a `Pending` invoice, appends to history, emits `InvoiceCreated`, returns id     |
+| `create_invoice_with_token(..., token)`                             | freelancer | same, with an explicit allowlisted token stored on the invoice (`TokenNotAllowed` otherwise)                                                                                            |
 | `fund_invoice(invoice_id)`                                          | client     | pre-checks the client balance (typed `InsufficientBalance` error instead of an opaque token trap), then atomic `token.transfer(client → freelancer)`, marks `Paid`, emits `InvoicePaid` |
 | `release_funds(invoice_id)`                                         | —          | reserved seam for future held-escrow; no-op in the instant-release MVP                                                                                                                  |
 | `get_invoice(id)` / `get_invoice_history(freelancer)`               | — (read)   | reads                                                                                                                                                                                   |
-| `default_token_address()` / `version()`                             | — (read)   | metadata                                                                                                                                                                                |
+| `default_token_address()` / `get_allowed_tokens()` / `version()`    | — (read)   | metadata                                                                                                                                                                                |
 
 Errors are a typed `contracterror` enum (`NotInitialized`, `AlreadyInitialized`,
 `InvoiceNotFound`, `AlreadyPaid`, `InvalidAmount`, and — appended after the
 v1 testnet deployment, keeping codes 1–5 wire-compatible —
-`InvalidDescription`, `InvalidParties`, `InsufficientBalance`).
+`InvalidDescription`, `InvalidParties`, `InsufficientBalance`, `TokenNotAllowed`).
 
 Eighteen unit tests in `contracts/invoice/src/test.rs` cover the
 create→fund→paid loop, history ordering and empty-history, double-funding

@@ -15,6 +15,53 @@ const DEFAULT_TOKEN_ID =
 const DEFAULT_TOKEN_ISSUER =
   "GDYPHJ7H2DO6OUWD5ZJRLFT57QNUZYOWBBYEHEQBAGJDFBAAFJWMXSNU";
 
+export type TokenConfig = {
+  id: string;
+  issuer: string;
+  symbol: string;
+  decimals: number;
+};
+
+const DEFAULT_TOKEN: TokenConfig = {
+  id: DEFAULT_TOKEN_ID,
+  issuer: DEFAULT_TOKEN_ISSUER,
+  symbol: process.env.NEXT_PUBLIC_TOKEN_SYMBOL ?? "USDC",
+  decimals: Number(process.env.NEXT_PUBLIC_TOKEN_DECIMALS ?? "7"),
+};
+
+// Additional invoice tokens are configured as JSON so no code change is needed
+// when the contract allowlist grows. Symbol/decimals are only fallbacks: the
+// app reads the authoritative values from each token contract at runtime.
+function parseTokens(): TokenConfig[] {
+  const raw = process.env.NEXT_PUBLIC_TOKENS;
+  if (!raw) return [DEFAULT_TOKEN];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [DEFAULT_TOKEN];
+    const extra = parsed
+      .filter(
+        (t): t is Record<string, unknown> =>
+          Boolean(t && typeof t === "object" && t.id && t.issuer)
+      )
+      .map((t) => ({
+        id: String(t.id),
+        issuer: String(t.issuer),
+        symbol: String(t.symbol ?? "TOKEN"),
+        decimals: Number(t.decimals ?? 7),
+      }))
+      .filter((t) => t.id !== DEFAULT_TOKEN.id);
+    return [DEFAULT_TOKEN, ...extra];
+  } catch {
+    return [DEFAULT_TOKEN];
+  }
+}
+
+export const tokens: TokenConfig[] = parseTokens();
+
+export function getTokenConfig(id?: string): TokenConfig {
+  return tokens.find((t) => t.id === id) ?? DEFAULT_TOKEN;
+}
+
 export const config = {
   network: process.env.NEXT_PUBLIC_NETWORK ?? "TESTNET",
   networkPassphrase:
@@ -26,10 +73,11 @@ export const config = {
     process.env.NEXT_PUBLIC_HORIZON_URL ??
     "https://horizon-testnet.stellar.org",
   contractId: process.env.NEXT_PUBLIC_CONTRACT_ID ?? DEFAULT_CONTRACT_ID,
-  tokenId: process.env.NEXT_PUBLIC_TOKEN_ID ?? DEFAULT_TOKEN_ID,
-  tokenIssuer: process.env.NEXT_PUBLIC_TOKEN_ISSUER ?? DEFAULT_TOKEN_ISSUER,
-  tokenDecimals: Number(process.env.NEXT_PUBLIC_TOKEN_DECIMALS ?? "7"),
-  tokenSymbol: process.env.NEXT_PUBLIC_TOKEN_SYMBOL ?? "USDC",
+  tokenId: DEFAULT_TOKEN.id,
+  tokenIssuer: DEFAULT_TOKEN.issuer,
+  tokenDecimals: DEFAULT_TOKEN.decimals,
+  tokenSymbol: DEFAULT_TOKEN.symbol,
+  tokens,
 } as const;
 
 export function isConfigured(): boolean {
