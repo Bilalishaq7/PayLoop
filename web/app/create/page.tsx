@@ -34,6 +34,8 @@ export default function CreatePage() {
   const [templateName, setTemplateName] = useState("");
 
   const configured = isConfigured();
+  // YYYY-MM-DD in local time, for the date input's `min`
+  const today = new Date().toLocaleDateString("en-CA");
 
   function validate(): string | null {
     if (!client.startsWith("G") || client.length !== 56) {
@@ -48,6 +50,9 @@ export default function CreatePage() {
     }
     if (!description.trim()) {
       return "Add a short description of the work.";
+    }
+    if (dueDate && dueDate < today) {
+      return "Pick a due date that isn't in the past.";
     }
     return null;
   }
@@ -240,6 +245,12 @@ export default function CreatePage() {
                   placeholder="Save current as template"
                   value={templateName}
                   onChange={(e) => setTemplateName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      saveTemplate();
+                    }
+                  }}
                   maxLength={40}
                   aria-label="Template name"
                 />
@@ -327,6 +338,7 @@ export default function CreatePage() {
               id="due"
               type="date"
               className="input"
+              min={today}
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
             />
