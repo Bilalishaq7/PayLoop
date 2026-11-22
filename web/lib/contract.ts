@@ -17,6 +17,12 @@ import {
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
 import { signXdr } from "./wallet";
+import {
+  createScanCache,
+  scanInvoices,
+  type InvoiceScanResult,
+  type ScanCache,
+} from "./invoice-scan";
 
 export type InvoiceStatus = "Pending" | "Paid";
 
@@ -126,19 +132,34 @@ export async function getInvoiceHistory(freelancer: string): Promise<Invoice[]> 
 // global feed of every invoice on the contract. This backs the public Activity
 // page (proof of wallet interactions) and does not depend on RPC event
 // retention. `max` bounds the scan so a large ledger can't hang the UI.
-export async function getAllInvoices(max = 250): Promise<Invoice[]> {
-  const out: Invoice[] = [];
-  for (let id = 1; id <= max; id++) {
-    let inv: Invoice | null;
-    try {
-      inv = await getInvoice(String(id));
-    } catch {
-      break;
-    }
-    if (!inv) break;
-    out.push(inv);
+//
+// The result reports RPC failures and a reached cap instead of hiding them,
+// and a short-lived cache keeps History and Activity from scanning twice.
+const SCAN_CACHE_TTL_MS = 30_000;
+const scanCaches = new Map<
+  number,
+  ScanCache<InvoiceScanResult<Invoice>>
+>();
+
+function scanCacheFor(max: number): ScanCache<InvoiceScanResult<Invoice>> {
+  let cache = scanCaches.get(max);
+  if (!cache) {
+    cache = createScanCache<InvoiceScanResult<Invoice>>(SCAN_CACHE_TTL_MS);
+    scanCaches.set(max, cache);
   }
-  return out;
+  return cache;
+}
+
+export function getAllInvoices(
+  max = 250
+): Promise<InvoiceScanResult<Invoice>> {
+  return scanCacheFor(max).get(() =>
+    scanInvoices((id) => getInvoice(String(id)), { max })
+  );
+}
+
+export function clearInvoiceScanCache(): void {
+  scanCaches.clear();
 }
 
 export async function getTokenBalance(address: string): Promise<bigint> {

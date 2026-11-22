@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
 import { Alert, EmptyState, Spinner, StatusBadge } from "@/components/ui";
+import { ScanStatus } from "@/components/ScanStatus";
 import { InvoicePreview } from "@/components/InvoiceDocument";
-import { getAllInvoices, type Invoice } from "@/lib/contract";
+import type { Invoice } from "@/lib/contract";
+import { useInvoiceScan } from "@/lib/use-invoice-scan";
 import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
 import { config, isConfigured } from "@/lib/config";
 
@@ -16,30 +18,18 @@ type RoleFilter = "all" | "freelancer" | "client";
 // top Level-4 feedback requests ("invoice history", "search and filtering").
 export default function HistoryPage() {
   const { address, connect, connecting } = useWallet();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    invoices,
+    error,
+    reachedCap,
+    scannedThrough,
+    loading,
+    retry: load,
+  } = useInvoiceScan();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [role, setRole] = useState<RoleFilter>("all");
   const [preview, setPreview] = useState<Invoice | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const all = await getAllInvoices();
-      setInvoices(all);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load invoice history.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const mine = useMemo(() => {
     if (!address) return [];
@@ -147,14 +137,14 @@ export default function HistoryPage() {
         </button>
       </div>
 
-      {error && (
-        <Alert kind="error">
-          <span>{error}</span>{" "}
-          <button onClick={load} className="ml-2 underline">
-            Retry
-          </button>
-        </Alert>
-      )}
+      <ScanStatus
+        error={error}
+        reachedCap={reachedCap}
+        count={invoices.length}
+        scannedThrough={scannedThrough}
+        loading={loading}
+        onRetry={load}
+      />
 
       {loading && mine.length === 0 ? (
         <div className="space-y-3">
