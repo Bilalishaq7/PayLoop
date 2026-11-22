@@ -16,6 +16,7 @@ import {
 } from "@/lib/contract";
 import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
 import { config, isConfigured } from "@/lib/config";
+import { buildReminderMessage, isInvoiceOwner } from "@/lib/invoice-helpers";
 
 export default function PayClient({ id }: { id: string }) {
   const { address, connect, connecting } = useWallet();
@@ -28,6 +29,8 @@ export default function PayClient({ id }: { id: string }) {
   const [paidHash, setPaidHash] = useState<string | null>(null);
   const [trusted, setTrusted] = useState<boolean | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  // Which owner action last copied something to the clipboard (issue #69).
+  const [copied, setCopied] = useState<"link" | "reminder" | null>(null);
   // Whether the freelancer (recipient) can receive USDC. If they haven't
   // enabled the trustline, the transfer fails on-chain (Error #13), so we gate
   // the Pay button on this and show a clear message instead.
@@ -73,6 +76,16 @@ export default function PayClient({ id }: { id: string }) {
     getTokenBalance(address).then(setBalance).catch(() => {});
     hasUsdcTrustline(address).then(setTrusted).catch(() => setTrusted(null));
   }, [address, paidHash]);
+
+  async function copyToClipboard(kind: "link" | "reminder", text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(kind);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      setError("Couldn't copy to the clipboard. Copy the address bar link instead.");
+    }
+  }
 
   async function pay() {
     if (!address || !invoice) return;
@@ -133,7 +146,14 @@ export default function PayClient({ id }: { id: string }) {
   if (!invoice) return null;
 
   const isClient = address === invoice.client;
+  // Issue #69: the freelancer reopening their own link gets owner actions
+  // instead of the "wrong wallet" message. Client/anonymous views are unchanged.
+  const isOwner = isInvoiceOwner(address, invoice);
   const isPaid = invoice.status === "Paid";
+  const payUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/pay/${invoice.id}`
+      : `/pay/${invoice.id}`;
   const insufficient =
     balance !== null && balance < invoice.amount && isClient && !isPaid;
 
@@ -191,6 +211,58 @@ export default function PayClient({ id }: { id: string }) {
           </Alert>
         )}
 
+        {isOwner && (
+          <div
+            className="space-y-3 rounded-lg border border-brand-500/30 bg-brand-500/10 p-4 text-sm"
+            data-testid="owner-actions"
+          >
+            <div>
+              <p className="font-semibold">You created this invoice</p>
+              <p className="mt-1 text-slate-300">
+                {isPaid
+                  ? `Paid on ${formatDate(invoice.paidAt)}.`
+                  : `Waiting for payment from ${shortAddress(invoice.client)}.`}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => copyToClipboard("link", payUrl)}
+                className="btn-ghost text-sm"
+              >
+                {copied === "link" ? "Copied ✓" : "Copy payment link"}
+              </button>
+              {!isPaid && (
+                <button
+                  onClick={() =>
+                    copyToClipboard(
+                      "reminder",
+                      buildReminderMessage({
+                        id: invoice.id,
+                        amountLabel: `${formatAmount(invoice.amount)} ${config.tokenSymbol}`,
+                        description: humanizeDescription(invoice.description),
+                        url: payUrl,
+                      })
+                    )
+                  }
+                  className="btn-ghost text-sm"
+                  title="Copy a reminder message to send to your client"
+                >
+                  {copied === "reminder" ? "Copied ✓" : "Copy reminder"}
+                </button>
+              )}
+              <button
+                onClick={() => setReceiptOpen(true)}
+                className="btn-ghost text-sm"
+              >
+                {isPaid ? "⬇ Download PDF receipt" : "⬇ Download PDF"}
+              </button>
+              <button onClick={load} className="btn-ghost text-sm">
+                ↻ Refresh status
+              </button>
+            </div>
+          </div>
+        )}
+
         {error && (
           <Alert kind="error">
             <span>{error}</span>{" "}
@@ -210,7 +282,7 @@ export default function PayClient({ id }: { id: string }) {
               >
                 {connecting ? "Connecting…" : "Connect wallet to pay"}
               </button>
-            ) : !isClient ? (
+            ) : isOwner ? null : !isClient ? (
               <Alert kind="info">
                 This invoice is addressed to {shortAddress(invoice.client)}.
                 Connect that wallet to pay it.
@@ -288,6 +360,7 @@ export default function PayClient({ id }: { id: string }) {
         open={receiptOpen}
         onClose={() => setReceiptOpen(false)}
         confirmLabel=""
+        txHash={paidHash ?? undefined}
       />
     </div>
   );

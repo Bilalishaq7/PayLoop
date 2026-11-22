@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
 import { Alert, Spinner, TxLink } from "@/components/ui";
 import { InvoicePreview } from "@/components/InvoiceDocument";
 import { createInvoice } from "@/lib/contract";
 import { toBaseUnits } from "@/lib/format";
+import { dueDateError, todayDateInputValue } from "@/lib/invoice-helpers";
 import { config, isConfigured } from "@/lib/config";
 import {
   BUILTIN_TEMPLATES,
@@ -24,6 +25,10 @@ export default function CreatePage() {
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
+  // Set after mount so the server-rendered markup and the first client render
+  // match (the server's "today" can differ from the user's local date).
+  const [today, setToday] = useState("");
+  useEffect(() => setToday(todayDateInputValue()), []);
   const [submitting, setSubmitting] = useState(false);
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +54,9 @@ export default function CreatePage() {
     if (!description.trim()) {
       return "Add a short description of the work.";
     }
+    // Issue #66: an empty due date is fine; a date before today is not.
+    const dueErr = dueDateError(dueDate);
+    if (dueErr) return dueErr;
     return null;
   }
 
@@ -327,9 +335,17 @@ export default function CreatePage() {
               id="due"
               type="date"
               className="input"
+              min={today || undefined}
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
+              aria-invalid={dueDateError(dueDate) ? true : undefined}
+              aria-describedby={dueDateError(dueDate) ? "due-error" : undefined}
             />
+            {dueDateError(dueDate) && (
+              <p id="due-error" role="alert" className="mt-1 text-xs text-red-300">
+                {dueDateError(dueDate)}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row">
