@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import type { Invoice } from "@/lib/contract";
 import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
-import { config } from "@/lib/config";
+import { useTokenMeta } from "@/lib/use-token-meta";
 import { StatusBadge } from "./ui";
 import { LogoMark } from "./LogoMark";
 
@@ -13,6 +13,7 @@ import { LogoMark } from "./LogoMark";
 // library needed; the print dialog's "Save as PDF" produces a shareable file.
 
 export function InvoiceDocument({ invoice }: { invoice: Invoice }) {
+  const token = useTokenMeta(invoice.token);
   return (
     <div className="card invoice-print space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -29,8 +30,8 @@ export function InvoiceDocument({ invoice }: { invoice: Invoice }) {
       </div>
 
       <div className="text-3xl font-bold tracking-tight">
-        {formatAmount(invoice.amount)}{" "}
-        <span className="text-lg text-slate-400">{config.tokenSymbol}</span>
+        {formatAmount(invoice.amount, token.decimals)}{" "}
+        <span className="text-lg text-slate-400">{token.symbol}</span>
       </div>
 
       <div className="space-y-2 rounded-lg bg-ink-900/60 p-4 text-sm">
@@ -85,7 +86,7 @@ export function InvoiceDocument({ invoice }: { invoice: Invoice }) {
 
       <div className="border-t border-white/10 pt-4 text-xs text-slate-500">
         <p className="font-semibold text-slate-300">
-          {formatAmount(invoice.amount)} {config.tokenSymbol}{" "}
+          {formatAmount(invoice.amount, token.decimals)} {token.symbol}{" "}
           {invoice.status === "Paid" ? "paid" : "due"} — settled on-chain in
           seconds on Stellar.
         </p>

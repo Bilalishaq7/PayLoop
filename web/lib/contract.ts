@@ -15,7 +15,7 @@ import {
   xdr,
   rpc,
 } from "@stellar/stellar-sdk";
-import { config } from "./config";
+import { config, getTokenConfig, tokens } from "./config";
 import { signXdr } from "./wallet";
 import {
   createScanCache,
@@ -25,6 +25,8 @@ import {
 } from "./invoice-scan";
 
 export type InvoiceStatus = "Pending" | "Paid";
+
+export type TokenMetadata = { symbol: string; decimals: number };
 
 export type Invoice = {
   id: string;
@@ -76,7 +78,11 @@ function decodeInvoice(raw: any): Invoice {
 
 // --- Read-only calls (simulate only) --------------------------------------
 
-async function simulateRead(method: string, args: xdr.ScVal[]): Promise<any> {
+async function simulateContractRead(
+  contractId: string,
+  method: string,
+  args: xdr.ScVal[]
+): Promise<any> {
   const srv = server();
   const account = await srv.getAccount(READ_SOURCE).catch(() => null);
   // Fall back to a throwaway account for pure reads if the read-source isn't
@@ -89,7 +95,7 @@ async function simulateRead(method: string, args: xdr.ScVal[]): Promise<any> {
     fee: BASE_FEE,
     networkPassphrase: config.networkPassphrase,
   })
-    .addOperation(contract().call(method, ...args))
+    .addOperation(new Contract(contractId).call(method, ...args))
     .setTimeout(30)
     .build();
 
@@ -101,6 +107,57 @@ async function simulateRead(method: string, args: xdr.ScVal[]): Promise<any> {
     return null;
   }
   return scValToNative(sim.result.retval);
+}
+
+function simulateRead(method: string, args: xdr.ScVal[]): Promise<any> {
+  return simulateContractRead(config.contractId, method, args);
+}
+
+// Token symbol and decimals come from the token contract (SEP-41), not from
+// global config, so an invoice denominated in a 6-decimal token formats
+// correctly. Failed reads fall back to the configured values.
+const tokenMetadataCache = new Map<string, TokenMetadata>();
+
+export async function getTokenMetadata(
+  tokenId: string = config.tokenId
+): Promise<TokenMetadata> {
+  const cached = tokenMetadataCache.get(tokenId);
+  if (cached) return cached;
+  const fallback = getTokenConfig(tokenId);
+  let meta: TokenMetadata = {
+    symbol: fallback.symbol,
+    decimals: fallback.decimals,
+  };
+  try {
+    const [symbol, decimals] = await Promise.all([
+      simulateContractRead(tokenId, "symbol", []),
+      simulateContractRead(tokenId, "decimals", []),
+    ]);
+    meta = {
+      symbol: symbol ? String(symbol) : meta.symbol,
+      decimals: decimals === undefined || decimals === null
+        ? meta.decimals
+        : Number(decimals),
+    };
+    tokenMetadataCache.set(tokenId, meta);
+  } catch {
+    // Keep the config fallback; a token that can't be read still renders.
+  }
+  return meta;
+}
+
+// The contract's allowlist is authoritative; a v1 deployment without this
+// entrypoint simply falls back to the configured tokens.
+export async function getAllowedTokenIds(): Promise<string[]> {
+  try {
+    const raw = await simulateRead("get_allowed_tokens", []);
+    if (Array.isArray(raw) && raw.length > 0) {
+      return raw.map((id) => String(id));
+    }
+  } catch {
+    // v1 contract: no allowlist entrypoint.
+  }
+  return tokens.map((t) => t.id);
 }
 
 // A well-known funded testnet account used purely as a simulation source for
@@ -162,9 +219,12 @@ export function clearInvoiceScanCache(): void {
   scanCaches.clear();
 }
 
-export async function getTokenBalance(address: string): Promise<bigint> {
+export async function getTokenBalance(
+  address: string,
+  tokenId: string = config.tokenId
+): Promise<bigint> {
   const srv = server();
-  const token = new Contract(config.tokenId);
+  const token = new Contract(tokenId);
   const source = new (await import("@stellar/stellar-sdk")).Account(
     READ_SOURCE,
     "0"
@@ -243,16 +303,21 @@ export async function createInvoice(params: {
   amount: bigint;
   description: string;
   dueDate: bigint;
+  token?: string;
 }): Promise<{ id: string; hash: string }> {
+  const tokenId = params.token && params.token !== config.tokenId
+    ? params.token
+    : null;
   const { hash, returnValue } = await invokeSigned(
     params.freelancer,
-    "create_invoice",
+    tokenId ? "create_invoice_with_token" : "create_invoice",
     [
       new Address(params.freelancer).toScVal(),
       new Address(params.client).toScVal(),
       nativeToScVal(params.amount, { type: "i128" }),
       nativeToScVal(params.description, { type: "string" }),
       nativeToScVal(params.dueDate, { type: "u64" }),
+      ...(tokenId ? [new Address(tokenId).toScVal()] : []),
     ]
   );
   return { id: returnValue?.toString() ?? "0", hash };
@@ -268,10 +333,10 @@ export async function fundInvoice(
   return { hash };
 }
 
-// --- Trustline (classic asset behind the USDC SAC) ------------------------
+// --- Trustline (classic asset behind each SAC) ----------------------------
 
-function usdcAsset(): Asset {
-  return new Asset(config.tokenSymbol, config.tokenIssuer);
+function tokenAsset(tokenId: string, symbol: string): Asset {
+  return new Asset(symbol, getTokenConfig(tokenId).issuer);
 }
 
 function horizon(): Horizon.Server {
@@ -280,16 +345,19 @@ function horizon(): Horizon.Server {
   });
 }
 
-// True if `address` already trusts the USDC asset (can hold/send it). The
-// issuer itself implicitly "has" the asset and never needs a trustline.
-export async function hasUsdcTrustline(address: string): Promise<boolean> {
-  if (address === config.tokenIssuer) return true;
+// True if `address` already trusts the asset behind `tokenId` (can hold/send
+// it). The issuer itself implicitly "has" the asset and needs no trustline.
+export async function hasTokenTrustline(
+  address: string,
+  tokenId: string = config.tokenId
+): Promise<boolean> {
+  const issuer = getTokenConfig(tokenId).issuer;
+  if (address === issuer) return true;
+  const { symbol } = await getTokenMetadata(tokenId);
   try {
     const account = await horizon().loadAccount(address);
     return account.balances.some(
-      (b: any) =>
-        b.asset_code === config.tokenSymbol &&
-        b.asset_issuer === config.tokenIssuer
+      (b: any) => b.asset_code === symbol && b.asset_issuer === issuer
     );
   } catch {
     // Account not found / network error: treat as no trustline so the UI
@@ -298,19 +366,20 @@ export async function hasUsdcTrustline(address: string): Promise<boolean> {
   }
 }
 
-// Builds a changeTrust op for the USDC asset, signs it via Freighter, and
-// submits through Horizon. Lets a wallet receive/hold USDC without hunting
-// for the asset in Freighter's UI.
-export async function establishUsdcTrustline(
-  address: string
+// Builds a changeTrust op for the asset behind `tokenId`, signs it via
+// Freighter, and submits through Horizon.
+export async function establishTokenTrustline(
+  address: string,
+  tokenId: string = config.tokenId
 ): Promise<{ hash: string }> {
+  const { symbol } = await getTokenMetadata(tokenId);
   const h = horizon();
   const account = await h.loadAccount(address);
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: config.networkPassphrase,
   })
-    .addOperation(Operation.changeTrust({ asset: usdcAsset() }))
+    .addOperation(Operation.changeTrust({ asset: tokenAsset(tokenId, symbol) }))
     .setTimeout(120)
     .build();
 
@@ -321,4 +390,15 @@ export async function establishUsdcTrustline(
   );
   const res = await h.submitTransaction(signedTx as any);
   return { hash: res.hash };
+}
+
+// Default-token compatibility wrappers used by the faucet/onboarding flows.
+export function hasUsdcTrustline(address: string): Promise<boolean> {
+  return hasTokenTrustline(address, config.tokenId);
+}
+
+export function establishUsdcTrustline(
+  address: string
+): Promise<{ hash: string }> {
+  return establishTokenTrustline(address, config.tokenId);
 }
