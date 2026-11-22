@@ -5,6 +5,7 @@ import type { Invoice } from "@/lib/contract";
 import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
 import { config } from "@/lib/config";
 import { StatusBadge } from "./ui";
+import { LogoMark } from "./LogoMark";
 
 // A clean, self-contained invoice sheet. Used for (a) the pre-send preview on
 // the create page and (b) PDF export via the browser's print-to-PDF — the
@@ -16,8 +17,8 @@ export function InvoiceDocument({ invoice }: { invoice: Invoice }) {
     <div className="card invoice-print space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-500 font-bold text-white">
-            ₽
+          <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-500 text-white">
+            <LogoMark className="h-6 w-6" />
           </span>
           <div>
             <p className="font-bold tracking-tight">PayLoop</p>
