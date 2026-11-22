@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import { Alert, Spinner, StatusBadge, EmptyState } from "@/components/ui";
-import { getAllInvoices, type Invoice } from "@/lib/contract";
+import { ScanStatus } from "@/components/ScanStatus";
+import type { Invoice } from "@/lib/contract";
+import { useInvoiceScan } from "@/lib/use-invoice-scan";
 import {
   formatAmount,
   formatDate,
@@ -17,30 +19,17 @@ import { config, explorer, isConfigured } from "@/lib/config";
 // surfaces aggregate usage. Doubles as verifiable proof of wallet interactions
 // for the submission — every freelancer/client address links to the explorer.
 export default function ActivityPage() {
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const all = await getAllInvoices();
-      setInvoices([...all].reverse()); // newest first
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load on-chain activity.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const scan = useInvoiceScan();
+  const invoices = useMemo(
+    () => [...scan.invoices].reverse(), // newest first
+    [scan.invoices]
+  );
+  const { loading, error, reachedCap, scannedThrough } = scan;
+  const load = scan.retry;
 
   function downloadCsv() {
-    // Export every on-chain invoice as CSV — reusable proof of usage activity
-    // for analytics / reporting without a backend.
+    // Export the loaded on-chain invoices as CSV, reusable proof of usage
+    // activity for analytics / reporting without a backend.
     const header = [
       "invoice_id",
       "description",
@@ -103,8 +92,8 @@ export default function ActivityPage() {
         <div>
           <h1 className="text-2xl font-bold">On-chain activity</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Every invoice recorded on the PayLoop contract, live from Stellar
-            testnet.{" "}
+            A live view of invoices recorded on the PayLoop contract, newest
+            first.{" "}
             <a
               href={explorer.contract(config.contractId)}
               target="_blank"
@@ -155,14 +144,14 @@ export default function ActivityPage() {
         </div>
       )}
 
-      {error && (
-        <Alert kind="error">
-          <span>{error}</span>{" "}
-          <button onClick={load} className="ml-2 underline">
-            Retry
-          </button>
-        </Alert>
-      )}
+      <ScanStatus
+        error={error}
+        reachedCap={reachedCap}
+        count={invoices.length}
+        scannedThrough={scannedThrough}
+        loading={loading}
+        onRetry={load}
+      />
 
       {loading && invoices.length === 0 ? (
         <div className="space-y-3">
