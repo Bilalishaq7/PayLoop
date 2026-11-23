@@ -6,6 +6,7 @@ import { Alert, Spinner } from "./ui";
 import { establishTokenTrustline, hasTokenTrustline } from "@/lib/contract";
 import { config } from "@/lib/config";
 import { useTokenMeta } from "@/lib/use-token-meta";
+import { trackEvent } from "@/lib/analytics";
 
 // Detects whether the connected wallet trusts the USDC asset and, if not,
 // offers a one-click button to establish the trustline via Freighter. This
@@ -45,6 +46,7 @@ export function TrustlineButton({
     try {
       await establishTokenTrustline(address, tokenId);
       setTrusted(true);
+      trackEvent("trustline_enabled");
       onDone?.();
     } catch (e: any) {
       setError(e?.message ?? `Could not enable ${token.symbol}.`);

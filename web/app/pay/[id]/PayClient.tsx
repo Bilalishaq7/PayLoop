@@ -14,9 +14,15 @@ import {
   hasTokenTrustline,
   type Invoice,
 } from "@/lib/contract";
-import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
+import {
+  formatAmount,
+  formatDate,
+  humanizeDescription,
+  shortAddress,
+} from "@/lib/format";
 import { config, isConfigured } from "@/lib/config";
 import { useTokenMeta } from "@/lib/use-token-meta";
+import { trackEvent } from "@/lib/analytics";
 
 export default function PayClient({ id }: { id: string }) {
   const { address, connect, connecting } = useWallet();
@@ -76,7 +82,9 @@ export default function PayClient({ id }: { id: string }) {
       setBalance(null);
       return;
     }
-    getTokenBalance(address, invoice.token).then(setBalance).catch(() => {});
+    getTokenBalance(address, invoice.token)
+      .then(setBalance)
+      .catch(() => {});
     hasTokenTrustline(address, invoice.token)
       .then(setTrusted)
       .catch(() => setTrusted(null));
@@ -88,7 +96,9 @@ export default function PayClient({ id }: { id: string }) {
       setCopied(kind);
       setTimeout(() => setCopied(null), 2000);
     } catch {
-      setError("Couldn't copy to the clipboard. Copy the address bar link instead.");
+      setError(
+        "Couldn't copy to the clipboard. Copy the address bar link instead.",
+      );
     }
   }
 
@@ -99,6 +109,7 @@ export default function PayClient({ id }: { id: string }) {
     try {
       const res = await fundInvoice(address, invoice.id);
       setPaidHash(res.hash);
+      trackEvent("invoice_paid");
       await load();
     } catch (e: any) {
       const raw = String(e?.message ?? "");
@@ -106,7 +117,7 @@ export default function PayClient({ id }: { id: string }) {
       if (raw.includes("trustline entry is missing")) {
         setFreelancerReady(false);
         setError(
-          `The freelancer hasn't enabled ${token.symbol} yet, so they can't receive this payment. Ask them to enable it, then try again.`
+          `The freelancer hasn't enabled ${token.symbol} yet, so they can't receive this payment. Ask them to enable it, then try again.`,
         );
       } else {
         setError(raw || "Payment failed.");
@@ -117,11 +128,7 @@ export default function PayClient({ id }: { id: string }) {
   }
 
   if (!isConfigured()) {
-    return (
-      <Alert kind="info">
-        The contract isn&apos;t configured yet.
-      </Alert>
-    );
+    return <Alert kind="info">The contract isn&apos;t configured yet.</Alert>;
   }
 
   if (loading) {
@@ -184,15 +191,20 @@ export default function PayClient({ id }: { id: string }) {
         </div>
 
         <div className="space-y-2 rounded-lg bg-ink-900/60 p-4 text-sm">
-          <Row label="Description" value={humanizeDescription(invoice.description) || "—"} />
-          <Row label="From (freelancer)" value={shortAddress(invoice.freelancer)} mono />
+          <Row
+            label="Description"
+            value={humanizeDescription(invoice.description) || "—"}
+          />
+          <Row
+            label="From (freelancer)"
+            value={shortAddress(invoice.freelancer)}
+            mono
+          />
           <Row label="To (client)" value={shortAddress(invoice.client)} mono />
           {invoice.dueDate > 0n && (
             <Row label="Due date" value={formatDate(invoice.dueDate)} />
           )}
-          {isPaid && (
-            <Row label="Paid on" value={formatDate(invoice.paidAt)} />
-          )}
+          {isPaid && <Row label="Paid on" value={formatDate(invoice.paidAt)} />}
         </div>
 
         {(paidHash || isPaid) && (
@@ -246,7 +258,7 @@ export default function PayClient({ id }: { id: string }) {
                         amountLabel: `${formatAmount(invoice.amount)} ${config.tokenSymbol}`,
                         description: humanizeDescription(invoice.description),
                         url: payUrl,
-                      })
+                      }),
                     )
                   }
                   className="btn-ghost text-sm"
@@ -324,9 +336,11 @@ export default function PayClient({ id }: { id: string }) {
                 {insufficient && (
                   <Alert kind="info">
                     <p>
-                      Your balance is {formatAmount(balance ?? 0n, token.decimals)}{" "}
+                      Your balance is{" "}
+                      {formatAmount(balance ?? 0n, token.decimals)}{" "}
                       {token.symbol}, but this invoice is for{" "}
-                      {formatAmount(invoice.amount, token.decimals)} {token.symbol}.
+                      {formatAmount(invoice.amount, token.decimals)}{" "}
+                      {token.symbol}.
                       {invoice.token === config.tokenId
                         ? " Grab test tokens to continue:"
                         : ` Grab ${token.symbol} from its issuer to continue:`}

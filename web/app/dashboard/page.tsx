@@ -3,9 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
+import { ConnectPrompt } from "@/components/ConnectPrompt";
 import { InvoiceCard } from "@/components/InvoiceCard";
 import { Alert, EmptyState, Spinner } from "@/components/ui";
-import { getInvoiceHistory, getTokenBalance, type Invoice } from "@/lib/contract";
+import {
+  getInvoiceHistory,
+  getTokenBalance,
+  type Invoice,
+} from "@/lib/contract";
 import { formatAmount, humanizeDescription } from "@/lib/format";
 import { isConfigured, tokens } from "@/lib/config";
 import { FaucetButton } from "@/components/FaucetButton";
@@ -14,7 +19,7 @@ import { TokenAmount } from "@/components/TokenAmount";
 import { useTokenMeta } from "@/lib/use-token-meta";
 
 export default function DashboardPage() {
-  const { address, connect, connecting } = useWallet();
+  const { address } = useWallet();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [balances, setBalances] = useState<Record<string, bigint>>({});
   const [loading, setLoading] = useState(false);
@@ -27,7 +32,7 @@ export default function DashboardPage() {
     try {
       const hist = await getInvoiceHistory(address);
       const bals = await Promise.all(
-        tokens.map((t) => getTokenBalance(address, t.id).catch(() => null))
+        tokens.map((t) => getTokenBalance(address, t.id).catch(() => null)),
       );
       // Newest first.
       setInvoices([...hist].reverse());
@@ -59,15 +64,12 @@ export default function DashboardPage() {
 
   if (!address) {
     return (
-      <div className="card flex flex-col items-center gap-4 py-14 text-center">
-        <h1 className="text-xl font-bold">Your dashboard</h1>
-        <p className="text-slate-400">
-          Connect your wallet to see your invoices and balance.
-        </p>
-        <button onClick={connect} disabled={connecting} className="btn-primary">
-          {connecting ? "Connecting…" : "Connect wallet"}
-        </button>
-      </div>
+      <ConnectPrompt
+        title="Your dashboard"
+        message="Connect your wallet to see your invoices and balance."
+        className="py-14"
+        messageClassName="text-slate-400"
+      />
     );
   }
 
@@ -76,7 +78,7 @@ export default function DashboardPage() {
   const pending = invoices.filter((i) => i.status === "Pending");
   const nowMs = Date.now();
   const overdue = pending.filter(
-    (i) => i.dueDate > 0n && i.dueDate * 1000n < BigInt(nowMs)
+    (i) => i.dueDate > 0n && i.dueDate * 1000n < BigInt(nowMs),
   );
 
   return (
@@ -96,7 +98,9 @@ export default function DashboardPage() {
           <p className="text-sm text-slate-400">Wallet balance</p>
           {tokens.map((t) => (
             <p key={t.id} className="mt-1 text-2xl font-bold">
-              {balances[t.id] === undefined ? "—" : (
+              {balances[t.id] === undefined ? (
+                "—"
+              ) : (
                 <TokenAmount
                   amount={balances[t.id] ?? 0n}
                   tokenId={t.id}
@@ -135,11 +139,7 @@ export default function DashboardPage() {
 
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Your invoices</h2>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="btn-ghost text-xs"
-        >
+        <button onClick={load} disabled={loading} className="btn-ghost text-xs">
           {loading ? <Spinner /> : "Refresh"}
         </button>
       </div>
@@ -251,7 +251,7 @@ function RemindButton({ invoice }: { invoice: Invoice }) {
         : `/pay/${invoice.id}`;
     const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
       invoice.amount,
-      token.decimals
+      token.decimals,
     )} ${token.symbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${url}`;
     try {
       await navigator.clipboard.writeText(text);

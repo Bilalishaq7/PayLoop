@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useWallet } from "./WalletProvider";
 import { Spinner } from "./ui";
 import { config } from "@/lib/config";
+import { trackEvent } from "@/lib/analytics";
 
 // Requests test USDC from the server-side faucet (which holds the issuer key).
 export function FaucetButton({ onDone }: { onDone?: () => void }) {
@@ -24,6 +25,7 @@ export function FaucetButton({ onDone }: { onDone?: () => void }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Faucet request failed.");
       setMsg("Sent 500 test USDC");
+      trackEvent("faucet_requested");
       onDone?.();
     } catch (e: any) {
       setMsg(e?.message ?? "Faucet failed.");

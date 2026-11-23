@@ -5,6 +5,9 @@ truth for invoices, and a Next.js web app that reads/writes it through the user'
 Freighter wallet. There is no application database — all invoice state lives
 on-chain, which is what makes the income history portable and tamper-proof.
 
+Locked design decisions are recorded as
+[Architecture Decision Records](adr/README.md) in `docs/adr/`.
+
 ```
 ┌─────────────────┐        sign tx        ┌──────────────────┐
 │  Freelancer /   │ ───────────────────▶  │   Freighter      │
@@ -124,7 +127,11 @@ Next.js 15 App Router, React 19, TypeScript, Tailwind. Key modules:
   `NEXT_PUBLIC_SENTRY_DSN` is set; `error.tsx` and `global-error.tsx` report
   render errors; `instrumentation.ts` wires request errors.
 - **Vercel Analytics** — `<Analytics />` in the root layout for page/usage
-  tracking.
+  tracking, plus privacy-safe funnel events fired once per successful action
+  via `trackEvent` in `web/lib/analytics.ts`. Events carry no wallet
+  addresses, amounts, descriptions or other identifiers:
+  `invoice_created`, `invoice_paid`, `faucet_requested`,
+  `trustline_enabled`.
 
 ## Known limitations (documented, intentional for testnet)
 
