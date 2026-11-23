@@ -1,0 +1,4 @@
+Contact: https://github.com/Yormee-103/PayLoop/security/advisories/new
+Expires: 2027-11-23T00:00:00.000Z
+Preferred-Languages: en
+Policy: https://github.com/Yormee-103/PayLoop/blob/main/SECURITY.md
