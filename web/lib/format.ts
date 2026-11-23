@@ -37,6 +37,14 @@ export function formatAmount(
   return frac ? `${withCommas}.${frac}` : withCommas;
 }
 
+export function formatNaira(amount: number): string {
+  if (!Number.isFinite(amount)) return "₦0.00";
+  return new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+  }).format(amount);
+}
+
 export function shortAddress(addr: string, chars = 4): string {
   if (!addr || addr.length <= chars * 2 + 3) return addr;
   return `${addr.slice(0, chars)}…${addr.slice(-chars)}`;

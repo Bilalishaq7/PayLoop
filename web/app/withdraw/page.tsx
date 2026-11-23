@@ -5,7 +5,9 @@ import { useWallet } from "@/components/WalletProvider";
 import { ConnectPrompt } from "@/components/ConnectPrompt";
 import { Alert, Spinner } from "@/components/ui";
 import { getTokenBalance } from "@/lib/contract";
-import { formatAmount, fromBaseUnits } from "@/lib/format";
+import { formatAmount, formatNaira, fromBaseUnits } from "@/lib/format";
+import { bankByCode } from "@/lib/banks";
+import { BankSelect } from "@/components/BankSelect";
 import { config } from "@/lib/config";
 
 // Mocked USDC -> Naira off-ramp. A production build would hand off to a licensed
@@ -33,6 +35,7 @@ export default function WithdrawPage() {
   }, [address]);
 
   const naira = amount ? Number(amount) * NGN_PER_USDC : 0;
+  const bankName = bankByCode(bank)?.name ?? "";
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -118,9 +121,19 @@ export default function WithdrawPage() {
           </div>
 
           <div>
-            <label className="label" htmlFor="amt">
-              Amount ({config.tokenSymbol})
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="label" htmlFor="amt">
+                Amount ({config.tokenSymbol})
+              </label>
+              <button
+                type="button"
+                className="mb-1 text-xs font-medium text-brand-400 hover:text-brand-300 disabled:text-slate-600"
+                disabled={balance === null || stage === "processing"}
+                onClick={() => balance !== null && setAmount(fromBaseUnits(balance))}
+              >
+                Max
+              </button>
+            </div>
             <input
               id="amt"
               className="input"
@@ -134,10 +147,10 @@ export default function WithdrawPage() {
               <p className="mt-1.5 text-sm text-slate-400">
                 You&apos;ll receive ≈{" "}
                 <span className="font-semibold text-slate-200">
-                  ₦{naira.toLocaleString()}
+                  {formatNaira(naira)}
                 </span>{" "}
                 <span className="text-slate-500">
-                  (₦{NGN_PER_USDC.toLocaleString()}/{config.tokenSymbol})
+                  ({formatNaira(NGN_PER_USDC)}/{config.tokenSymbol})
                 </span>
               </p>
             )}
@@ -147,21 +160,12 @@ export default function WithdrawPage() {
             <label className="label" htmlFor="bank">
               Bank
             </label>
-            <select
+            <BankSelect
               id="bank"
-              className="input"
               value={bank}
-              onChange={(e) => setBank(e.target.value)}
+              onChange={setBank}
               disabled={stage === "processing"}
-            >
-              <option value="">Select bank…</option>
-              <option>Access Bank</option>
-              <option>GTBank</option>
-              <option>Kuda</option>
-              <option>Opay</option>
-              <option>UBA</option>
-              <option>Zenith Bank</option>
-            </select>
+            />
           </div>
 
           <div>
