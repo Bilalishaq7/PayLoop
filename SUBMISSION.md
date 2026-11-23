@@ -6,6 +6,8 @@ dashboard screenshots).
 
 ## Submission checklist
 
+See also the full evidence documentation in [docs/submission.md](docs/submission.md).
+
 | Requirement | Status | Evidence |
 | --- | --- | --- |
 | Public GitHub repository | ✅ | https://github.com/Yormee-103/PayLoop |
@@ -22,16 +24,16 @@ dashboard screenshots).
 | **Product presentation** | | |
 | Professional pitch deck / PPT | ✅ | Live [/pitch](https://pay-loop-neon.vercel.app/pitch) + [`docs/pitch/PayLoop-Pitch-Deck.pptx`](docs/pitch/PayLoop-Pitch-Deck.pptx) (Problem, Solution, Market, Architecture, Growth, Roadmap) |
 | **Demo** | | |
-| Full product walkthrough/demo video | ✅ | [Level-5 demo video (Loom)](https://www.loom.com/share/0b08c1208df841ac96ecd61b2b05a7a9), linked from README — script in [DEMO.md](DEMO.md) |
+| Full product walkthrough/demo video | ✅ | [Level-5 demo video (Loom)](https://www.loom.com/share/0b08c1208df841ac96ecd61b2b05a7a9), linked from README and docs/submission.md — script in [DEMO.md](DEMO.md) |
 | **Technical standards** | | |
-| Updated documentation | ✅ | README + GROWTH/FEEDBACK/USERS/ARCHITECTURE/ANCHOR/DEMO + Excel + pitch deck |
+| Updated documentation | ✅ | README + docs/submission.md + GROWTH/FEEDBACK/USERS/ARCHITECTURE/ANCHOR/DEMO + Excel + pitch deck |
 | **User onboarding requirements** | | |
 | Google Form (wallet, email, name, rating, feedback) | ✅ | [PayLoop user survey](https://forms.gle/FbtjeS6pYHW4FjwWA) |
 | Excel export of responses | ✅ | [`docs/survey-responses.xlsx`](docs/survey-responses.xlsx) (regenerate: `python3 scripts/build-excel.py`) |
-| Excel linked in README | ✅ | README → "Feedback collection & Excel export" |
+| Excel linked in README | ✅ | README & docs/submission.md → "Feedback collection & Excel export" |
 | README improvement plan + git commit links | ✅ | [docs/GROWTH.md](docs/GROWTH.md) (feedback → shipped → commit) linked from README |
 | Proof of 50+ users | ✅ | [docs/USERS.md](docs/USERS.md) — 60 users, all with on-chain wallet interactions |
-| Screenshots of analytics/transactions | ✅ | [docs/screenshots/](docs/screenshots/) — Activity (with paid-vs-pending + settled-volume charts), Dashboard, Template picker, and Help/FAQ, linked from README |
+| Screenshots of analytics/transactions | ✅ | [docs/screenshots/](docs/screenshots/) and [docs/submission.md](docs/submission.md) — Activity (with paid-vs-pending + settled-volume charts), Dashboard, Template picker, and Help/FAQ, linked from README |
 | User feedback iteration summary | ✅ | [docs/FEEDBACK.md](docs/FEEDBACK.md) + [docs/GROWTH.md](docs/GROWTH.md) |
 
 ## What's done in the repo (no action needed)

@@ -7,6 +7,8 @@ import { Navbar } from "@/components/Navbar";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
 import { OnboardingTour } from "@/components/OnboardingTour";
 import { siteUrl } from "@/lib/site";
+import { config, explorer } from "@/lib/config";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -39,8 +41,45 @@ export default function RootLayout({
           <WalletProvider>
             <Navbar />
             <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
-            <footer className="mx-auto max-w-5xl px-4 py-10 text-center text-xs text-slate-500">
-              PayLoop · Built on Stellar Soroban · Testnet demo
+            <footer className="border-t border-white/5 py-10 text-xs text-slate-500">
+              <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 px-4 sm:flex-row">
+                <p>PayLoop · Built on Stellar Soroban · Testnet demo</p>
+                <nav
+                  aria-label="Footer links"
+                  className="flex flex-wrap items-center justify-center gap-4 text-slate-400"
+                >
+                  <Link href="/activity" className="transition hover:text-white">
+                    Activity
+                  </Link>
+                  <Link href="/help" className="transition hover:text-white">
+                    Help
+                  </Link>
+                  <a
+                    href="https://github.com/Yormee-103/PayLoop"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="transition hover:text-white"
+                  >
+                    GitHub
+                  </a>
+                  <a
+                    href={explorer.contract(config.contractId)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="transition hover:text-white"
+                  >
+                    Contract
+                  </a>
+                  <a
+                    href="https://github.com/Yormee-103/PayLoop/blob/main/SECURITY.md"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="transition hover:text-white"
+                  >
+                    Security
+                  </a>
+                </nav>
+              </div>
             </footer>
             <FeedbackWidget />
             <OnboardingTour />

@@ -8,12 +8,11 @@ import { getTokenBalance } from "@/lib/contract";
 import { formatAmount, formatNaira, fromBaseUnits } from "@/lib/format";
 import { bankByCode } from "@/lib/banks";
 import { BankSelect } from "@/components/BankSelect";
-import { config } from "@/lib/config";
+import { config, NGN_PER_USDC } from "@/lib/config";
 
 // Mocked USDC -> Naira off-ramp. A production build would hand off to a licensed
 // anchor over SEP-24; here we simulate the anchor UX end-to-end so the payout
 // story is complete for the demo. No real funds move.
-const NGN_PER_USDC = 1560;
 
 type Stage = "form" | "processing" | "done";
 

@@ -84,6 +84,9 @@ export function isConfigured(): boolean {
   return Boolean(config.contractId && config.tokenId);
 }
 
+// Mock exchange rate used for demonstration off-ramp conversions
+export const NGN_PER_USDC = 1560;
+
 // stellar.expert explorer helpers for building clickable proof links.
 const explorerBase =
   config.network === "PUBLIC"
