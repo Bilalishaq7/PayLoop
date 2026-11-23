@@ -25,6 +25,8 @@
 //! - `create_invoice_rejects_impostor_auth`: An impostor cannot forge an invoice by signing with their key
 //! - `fund_invoice_succeeds_with_client_auth`: Only the named client can fund an invoice (includes nested token.transfer auth)
 //! - `fund_invoice_fails_without_client_auth`: Funding fails without the client's signature; invoice remains Pending
+//! - `fund_invoice_as_payer_*`: A third party can fund with its own signature; missing/impostor/freelancer payers are rejected
+//! - `paid_event_records_actual_payer`: The paid event records the actual payer as a topic
 //!
 //! ## 3. Edge Cases and Pagination Tests
 //!
@@ -56,8 +58,8 @@ use proptest::{
     test_runner::{Config, RngAlgorithm, TestRng, TestRunner},
 };
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
-    token, Address, Env, String,
+    testutils::{Address as _, Events as _, Ledger as _},
+    token, Address, Env, Event as _, String,
 };
 use soroban_sdk::{
     testutils::{MockAuth, MockAuthInvoke},
@@ -463,6 +465,149 @@ fn fund_invoice_fails_without_client_auth() {
     // The invoice must remain Pending and unfunded.
     let inv = a.contract.get_invoice(&id);
     assert_eq!(inv.status, InvoiceStatus::Pending);
+}
+
+// Create is not under test in the payer tests, so notarize it with freelancer
+// MockAuth and reuse the resulting id.
+fn create_invoice_with_freelancer_auth(a: &AuthEnv) -> u64 {
+    a.env.mock_auths(&[MockAuth {
+        address: &a.freelancer,
+        invoke: &MockAuthInvoke {
+            contract: &a.contract_address,
+            fn_name: "create_invoice",
+            args: (
+                a.freelancer.clone(),
+                a.client.clone(),
+                1_000_000i128,
+                String::from_str(&a.env, "job"),
+                0u64,
+            )
+                .into_val(&a.env),
+            sub_invokes: &[],
+        },
+    }]);
+    a.contract.create_invoice(
+        &a.freelancer,
+        &a.client,
+        &1_000_000i128,
+        &String::from_str(&a.env, "job"),
+        &0u64,
+    )
+}
+
+#[test]
+fn fund_invoice_as_payer_succeeds_with_payer_auth() {
+    let a = auth_setup();
+    let payer = Address::generate(&a.env);
+    mint_with_admin_auth(&a, &payer, 1_000_000);
+    let id = create_invoice_with_freelancer_auth(&a);
+
+    // Only the payer named on the call may authorize it, and the nested
+    // token.transfer must be from that same payer to the freelancer.
+    a.env.mock_auths(&[MockAuth {
+        address: &payer,
+        invoke: &MockAuthInvoke {
+            contract: &a.contract_address,
+            fn_name: "fund_invoice_as_payer",
+            args: (id, payer.clone()).into_val(&a.env),
+            sub_invokes: &[MockAuthInvoke {
+                contract: &a.token,
+                fn_name: "transfer",
+                args: (payer.clone(), a.freelancer.clone(), 1_000_000i128).into_val(&a.env),
+                sub_invokes: &[],
+            }],
+        },
+    }]);
+    a.contract.fund_invoice_as_payer(&id, &payer);
+
+    let token_client = token::Client::new(&a.env, &a.token);
+    assert_eq!(token_client.balance(&a.freelancer), 1_000_000i128);
+    assert_eq!(token_client.balance(&payer), 0i128);
+    assert_eq!(a.contract.get_invoice(&id).status, InvoiceStatus::Paid);
+}
+
+#[test]
+fn fund_invoice_as_payer_fails_without_payer_auth() {
+    let a = auth_setup();
+    let payer = Address::generate(&a.env);
+    mint_with_admin_auth(&a, &payer, 1_000_000);
+    let id = create_invoice_with_freelancer_auth(&a);
+
+    // No payer auth granted: the require_auth must fail.
+    let res = a.contract.try_fund_invoice_as_payer(&id, &payer);
+    assert!(res.is_err());
+    assert_eq!(a.contract.get_invoice(&id).status, InvoiceStatus::Pending);
+}
+
+#[test]
+fn fund_invoice_as_payer_rejects_impostor_auth() {
+    let a = auth_setup();
+    let payer = Address::generate(&a.env);
+    let impostor = Address::generate(&a.env);
+    mint_with_admin_auth(&a, &impostor, 1_000_000);
+    let id = create_invoice_with_freelancer_auth(&a);
+
+    // The impostor signs as if they were the declared payer. The contract
+    // requires the declared payer's auth, so the call must fail.
+    a.env.mock_auths(&[MockAuth {
+        address: &impostor,
+        invoke: &MockAuthInvoke {
+            contract: &a.contract_address,
+            fn_name: "fund_invoice_as_payer",
+            args: (id, payer.clone()).into_val(&a.env),
+            sub_invokes: &[MockAuthInvoke {
+                contract: &a.token,
+                fn_name: "transfer",
+                args: (payer.clone(), a.freelancer.clone(), 1_000_000i128).into_val(&a.env),
+                sub_invokes: &[],
+            }],
+        },
+    }]);
+    let res = a.contract.try_fund_invoice_as_payer(&id, &payer);
+    assert!(res.is_err());
+    assert_eq!(a.contract.get_invoice(&id).status, InvoiceStatus::Pending);
+}
+
+#[test]
+fn fund_invoice_as_payer_rejects_freelancer_as_payer() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    s.token_admin.mint(&freelancer, &1_000_000i128);
+    let id = invoice_with_id(&s, &freelancer, &client, 1_000_000);
+
+    let res = s.contract.try_fund_invoice_as_payer(&id, &freelancer);
+    assert_eq!(res, Err(Ok(Error::InvalidParties)));
+    assert_eq!(s.contract.get_invoice(&id).status, InvoiceStatus::Pending);
+}
+
+#[test]
+fn paid_event_records_actual_payer() {
+    let s = setup();
+    s.env.ledger().with_mut(|l| l.timestamp = 1_700_000_000);
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    let payer = Address::generate(&s.env);
+    s.token_admin.mint(&payer, &1_000_000i128);
+    let id = invoice_with_id(&s, &freelancer, &client, 1_000_000);
+
+    s.contract.fund_invoice_as_payer(&id, &payer);
+
+    // Filter out the token contract's transfer events; the invoice contract
+    // must publish the named client and the actual payer as separate topics.
+    let events = s.env.events().all().filter_by_contract(&s.contract.address);
+    assert_eq!(
+        events.events(),
+        &[InvoicePaid {
+            freelancer: freelancer.clone(),
+            client: client.clone(),
+            payer: payer.clone(),
+            id,
+            amount: 1_000_000i128,
+            paid_at: 1_700_000_000,
+        }
+        .to_xdr(&s.env, &s.contract.address)],
+    );
 }
 
 // --- Edge case tests -------------------------------------------------------
