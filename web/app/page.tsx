@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NGN_PER_USDC } from "@/lib/config";
 
 const steps = [
   {
@@ -43,7 +44,12 @@ export default function Home() {
         </div>
         <div className="card space-y-4">
           <div className="flex items-center justify-between">
-            <span className="text-sm text-slate-400">Invoice #1042</span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-400">Invoice #1042</span>
+              <span className="badge bg-amber-500/15 text-amber-300 font-semibold text-xs">
+                Example
+              </span>
+            </div>
             <span className="badge bg-emerald-500/15 text-emerald-300">
               Paid
             </span>
@@ -53,7 +59,7 @@ export default function Home() {
             Brand website redesign · paid by a client in Berlin
           </div>
           <div className="rounded-lg bg-ink-900/60 p-3 text-sm text-slate-300">
-            ≈ ₦2,340,000 available to withdraw
+            ≈ ₦{(1500 * NGN_PER_USDC).toLocaleString()} available to withdraw
           </div>
         </div>
       </section>
