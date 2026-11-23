@@ -144,7 +144,14 @@ uploads the release WASM as an artifact on every push touching `contracts/`.
 
 ## Integration examples
 
-Everything below uses the **live testnet deployment**; the same code works
+Runnable examples live in [`../../examples/`](../../examples/README.md):
+
+- [`examples/rust-cross-contract`](../../examples/rust-cross-contract): a small
+  Soroban contract that calls `get_invoice` on a PayLoop contract.
+- [`examples/node`](../../examples/node): a Node script that reads and creates
+  an invoice with `@stellar/stellar-sdk`.
+
+The snippets below use the **live testnet deployment**; the same code works
 against any instance you deploy yourself.
 
 ### 1. TypeScript (browser or Node), `@stellar/stellar-sdk`

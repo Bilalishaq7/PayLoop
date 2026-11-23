@@ -7,6 +7,7 @@ import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/l
 import { useTokenMeta } from "@/lib/use-token-meta";
 import { StatusBadge } from "./ui";
 import { InvoicePreview } from "./InvoiceDocument";
+import { ShareMenu } from "./ShareMenu";
 
 export function InvoiceCard({
   invoice,
@@ -16,7 +17,6 @@ export function InvoiceCard({
   role: "freelancer" | "client";
 }) {
   const [copied, setCopied] = useState(false);
-  const [reminded, setReminded] = useState(false);
   const [preview, setPreview] = useState(false);
   const token = useTokenMeta(invoice.token);
 
@@ -37,19 +37,6 @@ export function InvoiceCard({
     }
   }
 
-  async function copyReminder() {
-    const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
-      invoice.amount,
-      token.decimals
-    )} ${token.symbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${link()}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setReminded(true);
-      setTimeout(() => setReminded(false), 2000);
-    } catch {
-      window.location.href = link();
-    }
-  }
 
   const overdue =
     invoice.status === "Pending" && invoice.dueDate > 0n && invoice.dueDate * 1000n < BigInt(Date.now());
@@ -114,9 +101,7 @@ export function InvoiceCard({
           <button onClick={copyLink} className="btn-ghost flex-1 text-sm">
             {copied ? "Link copied ✓" : "Copy payment link"}
           </button>
-          <button onClick={copyReminder} className="btn-ghost text-sm" title="Copy a payment reminder message">
-            {reminded ? "Copied ✓" : "Remind"}
-          </button>
+          <ShareMenu invoice={invoice} buttonClassName="btn-ghost text-sm" />
           <Link
             href={`/pay/${invoice.id}`}
             className="btn-ghost text-sm"
