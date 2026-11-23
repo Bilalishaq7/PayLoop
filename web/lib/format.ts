@@ -1,4 +1,4 @@
-import { config } from "./config";
+import { config } from "./config.ts";
 
 // Token amounts are integers in "stroops" of the token (7 decimals for USDC).
 // The UI works in human units; convert at the boundary.

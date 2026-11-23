@@ -11,12 +11,11 @@ import {
   getTokenBalance,
   type Invoice,
 } from "@/lib/contract";
-import { formatAmount, humanizeDescription } from "@/lib/format";
 import { isConfigured, tokens } from "@/lib/config";
 import { FaucetButton } from "@/components/FaucetButton";
 import { TrustlineButton } from "@/components/TrustlineButton";
 import { TokenAmount } from "@/components/TokenAmount";
-import { useTokenMeta } from "@/lib/use-token-meta";
+import { ShareMenu } from "@/components/ShareMenu";
 
 export default function DashboardPage() {
   const { address } = useWallet();
@@ -176,8 +175,7 @@ export default function DashboardPage() {
   );
 }
 
-// Quick-action card for unpaid invoices: one click copies a reminder message
-// per pending invoice (Level-4 feedback: "payment reminders").
+// Totals are kept per token so invoices in different tokens never get mixed.
 function totalsByToken(invoices: Invoice[], status: Invoice["status"]) {
   const totals = new Map<string, bigint>();
   for (const inv of invoices) {
@@ -208,6 +206,7 @@ function TokenTotals({
   );
 }
 
+// Quick-action card for unpaid invoices: share/copy reminder messages from one menu.
 function RemindersCard({
   pending,
   overdueCount,
@@ -233,42 +232,17 @@ function RemindersCard({
       </div>
       <div className="flex flex-wrap gap-2">
         {pending.map((inv) => (
-          <RemindButton key={inv.id} invoice={inv} />
+          <ShareMenu
+            key={inv.id}
+            invoice={inv}
+            align="left"
+            buttonClassName="btn-ghost text-xs"
+            label={`Remind #${inv.id}`}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function RemindButton({ invoice }: { invoice: Invoice }) {
-  const [copied, setCopied] = useState(false);
-  const token = useTokenMeta(invoice.token);
 
-  async function remind() {
-    const url =
-      typeof window !== "undefined"
-        ? `${window.location.origin}/pay/${invoice.id}`
-        : `/pay/${invoice.id}`;
-    const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
-      invoice.amount,
-      token.decimals,
-    )} ${token.symbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${url}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      window.location.href = url;
-    }
-  }
-
-  return (
-    <button
-      onClick={remind}
-      className="btn-ghost text-xs"
-      title="Copy a reminder message to send to your client"
-    >
-      {copied ? "Copied ✓" : `Remind #${invoice.id}`}
-    </button>
-  );
-}
