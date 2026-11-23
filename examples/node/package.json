@@ -1,0 +1,17 @@
+{
+  "name": "payloop-node-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read and create PayLoop invoices from Node.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "read": "node payloop.mjs read",
+    "create": "node payloop.mjs create"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "16.0.1"
+  }
+}

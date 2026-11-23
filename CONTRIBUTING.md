@@ -83,9 +83,54 @@ command with `LEFTHOOK=0`.
   implemented versus mocked or documentation-only (see `docs/ARCHITECTURE.md`
   and `docs/ANCHOR.md` for the current split).
 
+## Labels and difficulty
+
+Issues carry a few kinds of label. A label's description in the GitHub label
+list is the short version of what is below.
+
+**Where you can start**
+
+- `good first issue`: small, well-scoped, no discussion needed. Start here if
+  you are new to the repo.
+- `help wanted`: maintainers would like outside help on it.
+- `needs-discussion`: agree on the approach in the issue **before** writing
+  code (for example anything that needs a contract redeploy or changes stored
+  data). Do not open a PR for these until a maintainer has replied.
+
+**Difficulty**
+
+- `difficulty: beginner`: suitable for first-time contributors.
+- `difficulty: intermediate`: needs some familiarity with the codebase.
+- `difficulty: advanced`: large or design-heavy; talk to a maintainer first.
+
+**Area**
+
+- `contract` (Soroban contract) and `web` (Next.js app) say which part of the
+  repo the issue touches.
+- `a11y`, `security`, `testing`, `dx` (developer experience), `ux`, `design`,
+  `performance`, `integration` (third-party or ecosystem) and `refactor` (no
+  behaviour change) say what kind of change it is.
+
+**Type and status**
+
+- `bug`, `enhancement` and `documentation` say what kind of work it is.
+- `question` is for questions, not tasks.
+- `duplicate`, `invalid` and `wontfix` mean the issue is closed without work.
+- `Stellar Wave` marks issues that belong to the Stellar wave program.
+
+### Claiming an issue
+
+1. Comment on the issue that you would like to take it. Wait for a maintainer
+   to assign it to you before starting; for `needs-discussion` issues also wait
+   for the approach to be agreed.
+2. Work on one issue at a time, and keep the PR to what the issue asks for.
+3. Link it in your PR with `Fixes #123`.
+4. If you can no longer work on it, say so on the issue so someone else can
+   take it.
+
 ## Test policy
 
-- `contracts/invoice/src/test.rs` must pass in full (18 tests; `MockAuth`-based
+- `contracts/invoice/src/test.rs` must pass in full (27 tests; `MockAuth`-based
   authorization tests sit next to `mock_all_auths` convenience tests — new
   state-changing entrypoints should get both).
 - Do not weaken or delete existing tests to make a change pass. If a test is

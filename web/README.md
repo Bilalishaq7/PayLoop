@@ -48,6 +48,7 @@ Testnet defaults for the public vars are baked into `.env.example`.
 - `/create` — freelancer creates an invoice in the default or another allowlisted token (signs one tx)
 - `/dashboard` — freelancer's invoices, balances, test-USDC faucet
 - `/pay/[id]` — client-facing payment page; funds the invoice in one click
+- `/statement` — printable income statement (paid invoices for a date range, with totals and verification links)
 - `/withdraw` — mocked USDC→Naira off-ramp
 - `/activity` — public on-chain feed of every invoice + usage stats
 - `/api/faucet` — server route that mints test USDC (holds the issuer key)
