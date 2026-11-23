@@ -1,0 +1,16 @@
+# Pre-commit hooks (installed via `lefthook install`, see CONTRIBUTING.md).
+# Each command only runs when a staged file matches its glob, so commits that
+# touch unrelated areas stay fast. Opt out per-commit with
+# `git commit --no-verify` or `LEFTHOOK=0 git commit ...`.
+pre-commit:
+  parallel: true
+  commands:
+    web-prettier:
+      glob: "web/**/*.{ts,tsx,css,json}"
+      run: ./web/node_modules/.bin/prettier --check {staged_files}
+    web-eslint:
+      glob: "web/**/*.{ts,tsx}"
+      run: ./web/node_modules/.bin/eslint {staged_files}
+    rust-fmt:
+      glob: "contracts/**/*.rs"
+      run: cargo fmt --manifest-path contracts/Cargo.toml --all -- --check

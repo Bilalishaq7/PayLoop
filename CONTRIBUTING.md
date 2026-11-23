@@ -53,6 +53,23 @@ npm run build
 CI (`.github/workflows/`) runs the same checks on every PR; both must be green
 for review.
 
+## Git hooks (optional, recommended)
+
+[lefthook](https://lefthook.dev) runs Prettier and ESLint on staged `web/`
+files and `cargo fmt --check` on staged `contracts/` Rust files, so
+formatting and lint failures are caught locally before CI. Hooks only run on
+relevant staged files and are configured in `lefthook.yml`.
+
+Install once after cloning (from the repo root):
+
+```bash
+cd web && npm install
+./web/node_modules/.bin/lefthook install
+```
+
+To skip hooks for a single commit, use `git commit --no-verify` or prefix the
+command with `LEFTHOOK=0`.
+
 ## Review process
 
 - Maintainers review PRs by impact area: contract changes get a deliberate

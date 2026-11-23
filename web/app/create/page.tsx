@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
+import { ConnectPrompt } from "@/components/ConnectPrompt";
 import { Alert, Spinner, TxLink } from "@/components/ui";
 import { InvoicePreview } from "@/components/InvoiceDocument";
 import { createInvoice, getAllowedTokenIds } from "@/lib/contract";
 import { toBaseUnits } from "@/lib/format";
 import { config, getTokenConfig, isConfigured, tokens } from "@/lib/config";
 import { useTokenMeta } from "@/lib/use-token-meta";
+import { trackEvent } from "@/lib/analytics";
 import {
   BUILTIN_TEMPLATES,
   deleteCustomTemplate,
@@ -20,7 +22,7 @@ import {
 type Result = { id: string; hash: string };
 
 export default function CreatePage() {
-  const { address, connect, connecting } = useWallet();
+  const { address } = useWallet();
   const [client, setClient] = useState("");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
@@ -33,8 +35,8 @@ export default function CreatePage() {
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
-  const [customTemplates, setCustomTemplates] = useState<InvoiceTemplate[]>(() =>
-    loadCustomTemplates()
+  const [customTemplates, setCustomTemplates] = useState<InvoiceTemplate[]>(
+    () => loadCustomTemplates(),
   );
   const [templateName, setTemplateName] = useState("");
   const [tokenId, setTokenId] = useState(config.tokenId);
@@ -80,7 +82,7 @@ export default function CreatePage() {
 
   function applyTemplate(id: string) {
     const template = [...BUILTIN_TEMPLATES, ...customTemplates].find(
-      (t) => t.id === id
+      (t) => t.id === id,
     );
     if (!template) return;
     setDescription(template.description);
@@ -117,7 +119,7 @@ export default function CreatePage() {
             paidAt: 0n,
           }
         : null,
-    [client, amount, description, dueDate, address, tokenId, token.decimals]
+    [client, amount, description, dueDate, address, tokenId, token.decimals],
   );
 
   function openPreview() {
@@ -160,6 +162,7 @@ export default function CreatePage() {
         token: tokenId,
       });
       setResult(res);
+      trackEvent("invoice_created");
       setClient("");
       setAmount("");
       setDescription("");
@@ -212,18 +215,7 @@ export default function CreatePage() {
       {error && <Alert kind="error">{error}</Alert>}
 
       {!address ? (
-        <div className="card flex flex-col items-center gap-4 py-10 text-center">
-          <p className="text-slate-300">
-            Connect your wallet to create an invoice.
-          </p>
-          <button
-            onClick={connect}
-            disabled={connecting}
-            className="btn-primary"
-          >
-            {connecting ? "Connecting…" : "Connect wallet"}
-          </button>
-        </div>
+        <ConnectPrompt message="Connect your wallet to create an invoice." />
       ) : (
         <form
           onSubmit={(e) => {
@@ -241,7 +233,9 @@ export default function CreatePage() {
                 id="template"
                 className="input flex-1"
                 value=""
-                onChange={(e) => e.target.value && applyTemplate(e.target.value)}
+                onChange={(e) =>
+                  e.target.value && applyTemplate(e.target.value)
+                }
               >
                 <option value="">Choose a template…</option>
                 <optgroup label="Built-in">
@@ -282,7 +276,10 @@ export default function CreatePage() {
             {customTemplates.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {customTemplates.map((t) => (
-                  <span key={t.id} className="badge bg-brand-500/15 text-brand-200">
+                  <span
+                    key={t.id}
+                    className="badge bg-brand-500/15 text-brand-200"
+                  >
                     {t.name}
                     <button
                       type="button"
@@ -299,8 +296,8 @@ export default function CreatePage() {
               </div>
             )}
             <p className="mt-1.5 text-xs text-slate-500">
-              Templates prefill the description and amount. Your saved
-              templates stay in this browser.
+              Templates prefill the description and amount. Your saved templates
+              stay in this browser.
             </p>
           </div>
 
@@ -336,8 +333,8 @@ export default function CreatePage() {
                 ))}
               </select>
               <p className="mt-1 text-xs text-slate-500">
-                Only tokens allowed by the contract can be selected. This
-                choice is fixed once the invoice is created.
+                Only tokens allowed by the contract can be selected. This choice
+                is fixed once the invoice is created.
               </p>
             </div>
           )}
@@ -385,7 +382,11 @@ export default function CreatePage() {
               aria-describedby={dueDateError(dueDate) ? "due-error" : undefined}
             />
             {dueDateError(dueDate) && (
-              <p id="due-error" role="alert" className="mt-1 text-xs text-red-300">
+              <p
+                id="due-error"
+                role="alert"
+                className="mt-1 text-xs text-red-300"
+              >
                 {dueDateError(dueDate)}
               </p>
             )}
