@@ -42,6 +42,15 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: No committed test snapshots
+        run: |
+          tracked="$(git ls-files | grep -E '(^|/)test_snapshots/' || true)"
+          if [ -n "$tracked" ]; then
+            echo "::error::Test snapshots must not be committed (see CONTRIBUTING.md, Test snapshots):"
+            echo "$tracked"
+            exit 1
+          fi
+
       - name: Format check
         run: cargo fmt --all --check
 

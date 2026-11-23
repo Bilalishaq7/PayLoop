@@ -67,6 +67,36 @@ amount against your balance, shows the NGN conversion, and returns a reference.
 [`../docs/ANCHOR.md`](../docs/ANCHOR.md) for how this would connect to a real
 anchor.
 
+## Upgrading the Stellar SDK
+
+`@stellar/stellar-sdk` is pinned to an exact version in `package.json` (no `^`
+or `~`) and must stay that way. The SDK has to match the protocol version of
+the network it talks to: a mismatch can make every transaction fail with
+hard-to-diagnose errors such as "Bad union switch", with no change to our code.
+A routine `npm install` must never move it.
+
+To upgrade deliberately:
+
+1. Check the network's current protocol version:
+
+   ```bash
+   curl -s https://horizon-testnet.stellar.org/ | grep protocol_version
+   ```
+
+   (`current_protocol_version` is what the network runs now.)
+2. Read the SDK release notes for the target version and confirm it supports
+   that protocol.
+3. Change the version in `package.json` to the exact new version, then refresh
+   the lockfile with `npm install --package-lock-only` and review the diff.
+4. Run `npm ci`, `npm run lint` and `npm run build`.
+5. Test by hand against testnet before merging: connect Freighter, create an
+   invoice, fund it from a second wallet, and open History and Activity. These
+   exercise simulate, sign and submit, and the read paths.
+
+Mention the old and new SDK version and the protocol version you checked in the
+pull request. Other PRs that touch `package.json` may conflict with an upgrade;
+land the upgrade on its own.
+
 ## Deploy
 
 Configured for Vercel. Set the env vars in the Vercel project settings, then:

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
 import { ConnectPrompt } from "@/components/ConnectPrompt";
@@ -17,41 +17,37 @@ import { FaucetButton } from "@/components/FaucetButton";
 import { TrustlineButton } from "@/components/TrustlineButton";
 import { TokenAmount } from "@/components/TokenAmount";
 import { useTokenMeta } from "@/lib/use-token-meta";
+import { useAsyncResource } from "@/lib/use-async-resource";
+
+const NO_INVOICES: Invoice[] = [];
+const NO_BALANCES: Record<string, bigint> = {};
 
 export default function DashboardPage() {
   const { address } = useWallet();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [balances, setBalances] = useState<Record<string, bigint>>({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!address) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const hist = await getInvoiceHistory(address);
+  const {
+    data,
+    loading,
+    error,
+    reload: load,
+  } = useAsyncResource(
+    async () => {
+      const hist = await getInvoiceHistory(address as string);
       const bals = await Promise.all(
-        tokens.map((t) => getTokenBalance(address, t.id).catch(() => null)),
+        tokens.map((t) => getTokenBalance(address as string, t.id).catch(() => null)),
       );
-      // Newest first.
-      setInvoices([...hist].reverse());
       const next: Record<string, bigint> = {};
       tokens.forEach((t, i) => {
         const value = bals[i];
         if (value !== null) next[t.id] = value;
       });
-      setBalances(next);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load your invoices.");
-    } finally {
-      setLoading(false);
-    }
-  }, [address]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      // Newest first.
+      return { invoices: [...hist].reverse(), balances: next };
+    },
+    [address],
+    { enabled: Boolean(address), fallbackError: "Failed to load your invoices." },
+  );
+  const invoices = data?.invoices ?? NO_INVOICES;
+  const balances = data?.balances ?? NO_BALANCES;
 
   if (!isConfigured()) {
     return (

@@ -25,6 +25,16 @@ export default {
           800: "#131c2e",
           700: "#1e293b",
         },
+        // Semantic colours. The values are CSS variables in globals.css that
+        // change with the theme, so these classes work in both themes.
+        page: "rgb(var(--page) / <alpha-value>)",
+        surface: "rgb(var(--surface) / <alpha-value>)",
+        fg: {
+          DEFAULT: "rgb(var(--fg) / <alpha-value>)",
+          muted: "rgb(var(--fg-muted) / <alpha-value>)",
+          subtle: "rgb(var(--fg-subtle) / <alpha-value>)",
+        },
+        line: "rgb(var(--line) / <alpha-value>)",
       },
       fontFamily: {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
