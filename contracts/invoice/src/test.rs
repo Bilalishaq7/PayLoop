@@ -655,3 +655,106 @@ fn get_client_history_for_unknown_client_is_empty() {
     let history = s.contract.get_client_history(&stranger);
     assert_eq!(history.len(), 0);
 }
+
+
+// --- Token Allowlist Tests --------------------------------------------------
+//
+// These tests verify multi-token support and the allowlist mechanism.
+
+#[test]
+fn create_invoice_with_allowed_token_succeeds() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // Create a second token and add it to the allowlist
+    let (token2, token2_admin) = create_token(&s.env, &s.admin);
+    s.contract.add_allowed_token(&s.admin, &token2);
+
+    // Verify token2 is in the allowlist
+    let allowed = s.contract.get_allowed_tokens();
+    assert_eq!(allowed.len(), 2); // default token + token2
+
+    // Mint on the second token
+    token2_admin.mint(&client, &5_000_000i128);
+
+    // Create an invoice using the second token
+    let id = s.contract.create_invoice_with_token(
+        &freelancer,
+        &client,
+        &5_000_000i128,
+        &String::from_str(&s.env, "job in token2"),
+        &0u64,
+        &token2,
+    );
+    assert_eq!(id, 1);
+
+    // Verify invoice stored the token
+    let inv = s.contract.get_invoice(&id);
+    assert_eq!(inv.token, token2);
+    assert_eq!(inv.amount, 5_000_000i128);
+
+    // Fund with token2
+    let token2_client = token::Client::new(&s.env, &token2);
+    assert_eq!(token2_client.balance(&client), 5_000_000i128);
+
+    s.contract.fund_invoice(&id);
+
+    // Verify funds transferred in token2
+    assert_eq!(token2_client.balance(&client), 0);
+    assert_eq!(token2_client.balance(&freelancer), 5_000_000i128);
+}
+
+#[test]
+fn create_invoice_with_disallowed_token_fails() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // Create a token but do NOT add it to the allowlist
+    let (token_disallowed, _) = create_token(&s.env, &s.admin);
+
+    // Attempt to create an invoice with the disallowed token
+    let res = s.contract.try_create_invoice_with_token(
+        &freelancer,
+        &client,
+        &1_000_000i128,
+        &String::from_str(&s.env, "job"),
+        &0u64,
+        &token_disallowed,
+    );
+
+    // Must fail with TokenNotAllowed error
+    assert_eq!(res, Err(Ok(Error::TokenNotAllowed)));
+}
+
+#[test]
+fn default_token_always_in_allowlist() {
+    let s = setup();
+
+    // After initialization, the default token should be in the allowlist
+    let allowed = s.contract.get_allowed_tokens();
+    assert_eq!(allowed.len(), 1);
+    assert_eq!(allowed.get(0).unwrap(), &s.token);
+}
+
+#[test]
+fn create_invoice_uses_default_token_when_not_specified() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // Create invoice without specifying token (uses default)
+    s.token_admin.mint(&client, &1_000_000i128);
+    let id = s.contract.create_invoice(
+        &freelancer,
+        &client,
+        &1_000_000i128,
+        &String::from_str(&s.env, "job"),
+        &0u64,
+    );
+
+    // Verify invoice used the default token
+    let inv = s.contract.get_invoice(&id);
+    assert_eq!(inv.token, s.token);
+}
