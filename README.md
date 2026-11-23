@@ -130,9 +130,10 @@ Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Contract-level integr
 
 Ecosystem relevance beyond the product itself:
 
-1. **A reusable, token-agnostic invoice/escrow contract.** The payment token is
-   chosen at `initialize`, invoices store the token they were created with, and
-   the instant-release escrow pattern is documented for reuse —
+1. **A reusable, multi-token invoice/escrow contract.** A default payment token
+   is chosen at `initialize`, extra tokens can be allowlisted and chosen per
+   invoice, invoices store the token they were created with, and the
+   instant-release escrow pattern is documented for reuse —
    [contracts/invoice/README.md](contracts/invoice/README.md) ships the
    lifecycle, storage model, auth matrix, error codes, event schema, build/test
    commands and copy-paste TypeScript/CLI integration examples against the live
@@ -160,10 +161,11 @@ the unbounded growth of the per-freelancer history read — all in
 
 ## Features
 
-- Create an invoice on-chain (client, amount, description, optional due date).
+- Create an invoice on-chain (client, token, amount, description, optional due date).
 - **Preview the invoice** before it goes on-chain, and **export any invoice as PDF**.
 - Share a `/pay/<id>` link; the client funds it in one wallet click.
-- Instant settlement — USDC moves client→freelancer atomically, marked `Paid`.
+- Instant settlement — the invoice's own token moves client→freelancer atomically,
+  marked `Paid`.
 - **Invoice history** page with search + status/role filtering and **payment
   reminders** (one-click copy-to-send).
 - Freelancer dashboard: invoices, balance, received/pending totals, test-USDC faucet,
@@ -301,7 +303,7 @@ PayLoop/
 ## Roadmap
 
 - **MVP (this):** single invoice, shareable pay link, instant release on fund, on-chain history.
-- **Next:** live USDC↔Naira anchor off-ramp, milestone-based escrow (deposit + final), on-chain reputation score, recurring/retainer invoices, multi-stablecoin, agency batch payouts.
+- **Next:** live USDC↔Naira anchor off-ramp, milestone-based escrow (deposit + final), on-chain reputation score, recurring/retainer invoices, agency batch payouts.
 
 ## Contributing & license
 

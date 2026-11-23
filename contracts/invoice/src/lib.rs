@@ -52,12 +52,14 @@ pub enum Error {
     InvalidDescription = 6,
     InvalidParties = 7,
     InsufficientBalance = 8,
+    TokenNotAllowed = 9,
 }
 
 #[contracttype]
 enum DataKey {
     Admin,
     DefaultToken,
+    AllowedTokens,
     NextId,
     Invoice(u64),
     History(Address),
@@ -95,11 +97,14 @@ pub struct InvoiceContract;
 #[contractimpl]
 impl InvoiceContract {
     /// One-time setup. `payment_token` is the default token (test USDC SAC on
-    /// testnet) used when an invoice does not specify its own token.
+    /// testnet) used when an invoice does not specify its own token, and it is
+    /// the first entry in the allowlist.
     ///
     /// Deliberate design decisions: the admin has **no post-initialization
     /// power** (no rotation, no pausing, no recovery), and the default token is
-    /// immutable after init — a redeploy is the intended upgrade path.
+    /// immutable after init — a redeploy is the intended upgrade path. The only
+    /// admin action added for multi-token support is growing the token
+    /// allowlist; tokens can never be removed from an existing instance.
     pub fn initialize(env: Env, admin: Address, payment_token: Address) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
@@ -109,12 +114,40 @@ impl InvoiceContract {
         env.storage()
             .instance()
             .set(&DataKey::DefaultToken, &payment_token);
+        let mut allowed: Vec<Address> = Vec::new(&env);
+        allowed.push_back(payment_token);
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowedTokens, &allowed);
         env.storage().instance().set(&DataKey::NextId, &1u64);
         Ok(())
     }
 
-    /// Register a new invoice on-chain. Only the freelancer being credited can
-    /// create their own invoice. Returns the new invoice id.
+    /// Adds a token contract to the allowlist so invoices can be raised in it.
+    /// The default token is always present; existing entries are never removed,
+    /// so no previously created invoice can become unfundable.
+    ///
+    /// # Errors
+    /// `NotInitialized` when called before `initialize`.
+    pub fn add_allowed_token(env: Env, admin: Address, token: Address) -> Result<(), Error> {
+        admin.require_auth();
+        let mut allowed = Self::allowed_tokens(&env)?;
+        for existing in allowed.iter() {
+            if existing == token {
+                return Ok(());
+            }
+        }
+        allowed.push_back(token);
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowedTokens, &allowed);
+        Ok(())
+    }
+
+    /// Register a new invoice on-chain using the deployment's default token.
+    /// Only the freelancer being credited can create their own invoice. Returns
+    /// the new invoice id. This entrypoint is unchanged from v1 so existing
+    /// clients keep working.
     ///
     /// # Arguments
     /// - `freelancer` — address credited on the invoice; must authorize.
@@ -134,6 +167,56 @@ impl InvoiceContract {
         due_date: u64,
     ) -> Result<u64, Error> {
         let token = Self::default_token(&env)?;
+        Self::create_invoice_inner(
+            env,
+            freelancer,
+            client,
+            amount,
+            description,
+            due_date,
+            token,
+        )
+    }
+
+    /// Register a new invoice denominated in an explicit allowlisted token.
+    /// The token is stored on the invoice and used by `fund_invoice`, so one
+    /// contract instance can settle invoices in several stablecoins.
+    ///
+    /// # Errors
+    /// `NotInitialized`, `TokenNotAllowed`, `InvalidAmount`, `InvalidParties`,
+    /// `InvalidDescription`.
+    pub fn create_invoice_with_token(
+        env: Env,
+        freelancer: Address,
+        client: Address,
+        amount: i128,
+        description: String,
+        due_date: u64,
+        token: Address,
+    ) -> Result<u64, Error> {
+        if !Self::is_token_allowed(&env, &token)? {
+            return Err(Error::TokenNotAllowed);
+        }
+        Self::create_invoice_inner(
+            env,
+            freelancer,
+            client,
+            amount,
+            description,
+            due_date,
+            token,
+        )
+    }
+
+    fn create_invoice_inner(
+        env: Env,
+        freelancer: Address,
+        client: Address,
+        amount: i128,
+        description: String,
+        due_date: u64,
+        token: Address,
+    ) -> Result<u64, Error> {
         freelancer.require_auth();
         if amount <= 0 {
             return Err(Error::InvalidAmount);
@@ -353,6 +436,11 @@ impl InvoiceContract {
         Self::default_token(&env)
     }
 
+    /// Every token an invoice may be created with on this instance.
+    pub fn get_allowed_tokens(env: Env) -> Result<Vec<Address>, Error> {
+        Self::allowed_tokens(&env)
+    }
+
     pub fn version(env: Env) -> Symbol {
         Symbol::new(&env, "v1")
     }
@@ -362,6 +450,33 @@ impl InvoiceContract {
             .instance()
             .get(&DataKey::DefaultToken)
             .ok_or(Error::NotInitialized)
+    }
+
+    fn allowed_tokens(env: &Env) -> Result<Vec<Address>, Error> {
+        env.storage()
+            .instance()
+            .get(&DataKey::AllowedTokens)
+            .or_else(|| {
+                env.storage()
+                    .instance()
+                    .get(&DataKey::DefaultToken)
+                    .map(|default| {
+                        let mut tokens: Vec<Address> = Vec::new(env);
+                        tokens.push_back(default);
+                        tokens
+                    })
+            })
+            .ok_or(Error::NotInitialized)
+    }
+
+    fn is_token_allowed(env: &Env, token: &Address) -> Result<bool, Error> {
+        let allowed = Self::allowed_tokens(env)?;
+        for existing in allowed.iter() {
+            if existing == *token {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

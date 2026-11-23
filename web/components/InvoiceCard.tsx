@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import type { Invoice } from "@/lib/contract";
 import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
-import { config } from "@/lib/config";
+import { useTokenMeta } from "@/lib/use-token-meta";
 import { StatusBadge } from "./ui";
 import { InvoicePreview } from "./InvoiceDocument";
 
@@ -18,6 +18,7 @@ export function InvoiceCard({
   const [copied, setCopied] = useState(false);
   const [reminded, setReminded] = useState(false);
   const [preview, setPreview] = useState(false);
+  const token = useTokenMeta(invoice.token);
 
   function link() {
     return typeof window !== "undefined"
@@ -38,8 +39,9 @@ export function InvoiceCard({
 
   async function copyReminder() {
     const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
-      invoice.amount
-    )} ${config.tokenSymbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${link()}`;
+      invoice.amount,
+      token.decimals
+    )} ${token.symbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${link()}`;
     try {
       await navigator.clipboard.writeText(text);
       setReminded(true);
@@ -65,9 +67,9 @@ export function InvoiceCard({
             )}
           </p>
           <p className="text-2xl font-bold">
-            {formatAmount(invoice.amount)}{" "}
+            {formatAmount(invoice.amount, token.decimals)}{" "}
             <span className="text-base font-medium text-slate-400">
-              {config.tokenSymbol}
+              {token.symbol}
             </span>
           </p>
         </div>

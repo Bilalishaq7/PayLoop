@@ -7,7 +7,12 @@ import { Navbar } from "@/components/Navbar";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
 import { OnboardingTour } from "@/components/OnboardingTour";
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: "PayLoop — Get paid in crypto, cash out in Naira",
   description:
     "PayLoop lets African freelancers invoice foreign clients in USDC on Stellar and cash out to local currency. Fast, low-fee, on-chain proof of payment.",

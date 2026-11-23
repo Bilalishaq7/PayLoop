@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useWallet } from "./WalletProvider";
 import { useTheme } from "./ThemeProvider";
+import { LogoMark } from "./LogoMark";
 import { shortAddress } from "@/lib/format";
 
 const links = [
@@ -36,7 +37,7 @@ export function Navbar() {
           onClick={() => setOpen(false)}
         >
           <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-500 text-white">
-            ₽
+            <LogoMark className="h-5 w-5" />
           </span>
           <span className="text-lg tracking-tight">PayLoop</span>
         </Link>
