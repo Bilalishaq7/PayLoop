@@ -13,6 +13,8 @@ import {
   getTokenBalance,
   hasTokenTrustline,
 } from "@/lib/contract";
+import { errorMessage } from "@/lib/async-resource";
+import { buildReminderMessage, isInvoiceOwner } from "@/lib/invoice-helpers";
 import {
   formatAmount,
   formatDate,
@@ -100,8 +102,8 @@ export default function PayClient({ id }: { id: string }) {
       setPaidHash(res.hash);
       trackEvent("invoice_paid");
       await load();
-    } catch (e: any) {
-      const raw = String(e?.message ?? "");
+    } catch (e) {
+      const raw = errorMessage(e, "");
       // Translate the most common on-chain failure into plain language.
       if (raw.includes("trustline entry is missing")) {
         setFreelancerReady(false);

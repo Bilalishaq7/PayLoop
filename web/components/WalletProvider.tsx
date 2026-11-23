@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { connectWallet, detectWallet } from "@/lib/wallet";
+import { errorMessage } from "@/lib/async-resource";
 
 type WalletContextValue = {
   address: string | null;
@@ -59,9 +60,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setNetwork(state.network);
       setInstalled(true);
       localStorage.setItem(STORAGE_KEY, "1");
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to connect wallet.");
-      if (String(e?.message).toLowerCase().includes("not found")) {
+    } catch (e) {
+      const message = errorMessage(e, "Failed to connect wallet.");
+      setError(message);
+      if (message.toLowerCase().includes("not found")) {
         setInstalled(false);
       }
     } finally {
@@ -91,7 +93,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       connect,
       disconnect,
     }),
-    [address, network, installed, connecting, error, clearError, connect, disconnect]
+    [
+      address,
+      network,
+      installed,
+      connecting,
+      error,
+      clearError,
+      connect,
+      disconnect,
+    ],
   );
 
   return (
