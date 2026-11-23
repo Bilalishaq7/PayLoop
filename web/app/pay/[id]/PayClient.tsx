@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
 import { Alert, Spinner, StatusBadge, TxLink } from "@/components/ui";
@@ -12,7 +12,6 @@ import {
   getInvoice,
   getTokenBalance,
   hasTokenTrustline,
-  type Invoice,
 } from "@/lib/contract";
 import {
   formatAmount,
@@ -23,15 +22,15 @@ import {
 import { config, isConfigured } from "@/lib/config";
 import { useTokenMeta } from "@/lib/use-token-meta";
 import { trackEvent } from "@/lib/analytics";
+import { useAsyncResource } from "@/lib/use-async-resource";
 
 export default function PayClient({ id }: { id: string }) {
   const { address, connect, connecting } = useWallet();
-  const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [balance, setBalance] = useState<bigint | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
   const [paying, setPaying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Errors from actions on this page (paying, copying). Load errors come from
+  // the hook below.
+  const [actionError, setActionError] = useState<string | null>(null);
   const [paidHash, setPaidHash] = useState<string | null>(null);
   const [trusted, setTrusted] = useState<boolean | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
@@ -41,28 +40,18 @@ export default function PayClient({ id }: { id: string }) {
   // enabled the trustline, the transfer fails on-chain (Error #13), so we gate
   // the Pay button on this and show a clear message instead.
   const [freelancerReady, setFreelancerReady] = useState<boolean | null>(null);
+  const {
+    data: invoice,
+    loading,
+    error: loadError,
+    reload: load,
+  } = useAsyncResource(() => getInvoice(id), [id], {
+    fallbackError: "Failed to load invoice.",
+  });
+  const error = actionError ?? loadError;
+  // getInvoice resolves to null when the id does not exist.
+  const notFound = invoice === null;
   const token = useTokenMeta(invoice?.token);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const inv = await getInvoice(id);
-      if (!inv) {
-        setNotFound(true);
-      } else {
-        setInvoice(inv);
-      }
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load invoice.");
-    } finally {
-      setLoading(false);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   // Check the freelancer (recipient) can receive this token whenever the
   // invoice loads — the required trustline depends on the invoice's token.
@@ -96,7 +85,7 @@ export default function PayClient({ id }: { id: string }) {
       setCopied(kind);
       setTimeout(() => setCopied(null), 2000);
     } catch {
-      setError(
+      setActionError(
         "Couldn't copy to the clipboard. Copy the address bar link instead.",
       );
     }
@@ -104,7 +93,7 @@ export default function PayClient({ id }: { id: string }) {
 
   async function pay() {
     if (!address || !invoice) return;
-    setError(null);
+    setActionError(null);
     setPaying(true);
     try {
       const res = await fundInvoice(address, invoice.id);
@@ -116,11 +105,11 @@ export default function PayClient({ id }: { id: string }) {
       // Translate the most common on-chain failure into plain language.
       if (raw.includes("trustline entry is missing")) {
         setFreelancerReady(false);
-        setError(
+        setActionError(
           `The freelancer hasn't enabled ${token.symbol} yet, so they can't receive this payment. Ask them to enable it, then try again.`,
         );
       } else {
-        setError(raw || "Payment failed.");
+        setActionError(raw || "Payment failed.");
       }
     } finally {
       setPaying(false);

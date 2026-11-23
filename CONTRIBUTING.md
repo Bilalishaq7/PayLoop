@@ -41,6 +41,15 @@ cargo test
 cargo build --target wasm32v1-none --release   # optional; CI builds it
 ```
 
+### Test snapshots
+
+`cargo test` writes JSON snapshots to `contracts/invoice/test_snapshots/`.
+They are build output, so they are **not committed**: the directory is listed
+in `.gitignore` and the contract CI fails if any file under a `test_snapshots/`
+folder is tracked. If git shows them as changes, you have an old checkout;
+run `git rm -r --cached contracts/invoice/test_snapshots` and do not add them
+back. Assertions belong in the tests themselves, not in snapshot diffs.
+
 For web changes (`web/`):
 
 ```bash
