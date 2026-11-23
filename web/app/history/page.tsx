@@ -3,12 +3,18 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
+import { ConnectPrompt } from "@/components/ConnectPrompt";
 import { Alert, EmptyState, Spinner, StatusBadge } from "@/components/ui";
 import { ScanStatus } from "@/components/ScanStatus";
 import { InvoicePreview } from "@/components/InvoiceDocument";
 import type { Invoice } from "@/lib/contract";
 import { useInvoiceScan } from "@/lib/use-invoice-scan";
-import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
+import {
+  formatAmount,
+  formatDate,
+  humanizeDescription,
+  shortAddress,
+} from "@/lib/format";
 import { getTokenConfig, isConfigured } from "@/lib/config";
 import { TokenAmount } from "@/components/TokenAmount";
 import { useTokenMeta } from "@/lib/use-token-meta";
@@ -19,7 +25,7 @@ type RoleFilter = "all" | "freelancer" | "client";
 // Personal invoice history with search + status/role filtering. Addresses the
 // top Level-4 feedback requests ("invoice history", "search and filtering").
 export default function HistoryPage() {
-  const { address, connect, connecting } = useWallet();
+  const { address } = useWallet();
   const {
     invoices,
     error,
@@ -36,7 +42,7 @@ export default function HistoryPage() {
   const mine = useMemo(() => {
     if (!address) return [];
     return invoices.filter(
-      (i) => i.freelancer === address || i.client === address
+      (i) => i.freelancer === address || i.client === address,
     );
   }, [invoices, address]);
 
@@ -49,15 +55,16 @@ export default function HistoryPage() {
         if (role === "freelancer" && i.freelancer !== address) return false;
         if (role === "client" && i.client !== address) return false;
         if (!q) return true;
-        const counterparty =
-          i.freelancer === address ? i.client : i.freelancer;
+        const counterparty = i.freelancer === address ? i.client : i.freelancer;
         return (
           i.id.toLowerCase().includes(q) ||
           i.description.toLowerCase().includes(q) ||
           i.freelancer.toLowerCase().includes(q) ||
           i.client.toLowerCase().includes(q) ||
           counterparty.toLowerCase().includes(q) ||
-          formatAmount(i.amount, getTokenConfig(i.token).decimals).includes(q) ||
+          formatAmount(i.amount, getTokenConfig(i.token).decimals).includes(
+            q,
+          ) ||
           humanizeDescription(i.description).toLowerCase().includes(q)
         );
       })
@@ -65,9 +72,7 @@ export default function HistoryPage() {
   }, [mine, query, status, role, address]);
 
   if (!isConfigured()) {
-    return (
-      <Alert kind="info">The contract isn&apos;t configured yet.</Alert>
-    );
+    return <Alert kind="info">The contract isn&apos;t configured yet.</Alert>;
   }
 
   if (!address) {
@@ -79,14 +84,7 @@ export default function HistoryPage() {
             Search, filter and export every invoice you&apos;ve created or paid.
           </p>
         </div>
-        <div className="card flex flex-col items-center gap-4 py-10 text-center">
-          <p className="text-slate-300">
-            Connect your wallet to see your invoice history.
-          </p>
-          <button onClick={connect} disabled={connecting} className="btn-primary">
-            {connecting ? "Connecting…" : "Connect wallet"}
-          </button>
-        </div>
+        <ConnectPrompt message="Connect your wallet to see your invoice history." />
       </div>
     );
   }
@@ -130,11 +128,19 @@ export default function HistoryPage() {
                 role === r ? "ring-1 ring-brand-400" : ""
               }`}
             >
-              {r === "all" ? "Any role" : r === "freelancer" ? "I invoiced" : "I paid"}
+              {r === "all"
+                ? "Any role"
+                : r === "freelancer"
+                  ? "I invoiced"
+                  : "I paid"}
             </button>
           ))}
         </div>
-        <button onClick={load} disabled={loading} className="btn-ghost ml-auto text-xs">
+        <button
+          onClick={load}
+          disabled={loading}
+          className="btn-ghost ml-auto text-xs"
+        >
           {loading ? <Spinner /> : "Refresh"}
         </button>
       </div>
@@ -203,13 +209,19 @@ export default function HistoryPage() {
                   </p>
                   <p className="text-xs text-slate-400">
                     {isFreelancer ? "Client" : "Freelancer"}:{" "}
-                    <span className="font-mono">{shortAddress(counterparty)}</span>
+                    <span className="font-mono">
+                      {shortAddress(counterparty)}
+                    </span>
                     {" · "}Created {formatDate(inv.createdAt)}
                     {inv.dueDate > 0n && ` · Due ${formatDate(inv.dueDate)}`}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <TokenAmount amount={inv.amount} tokenId={inv.token} className="font-semibold" />
+                  <TokenAmount
+                    amount={inv.amount}
+                    tokenId={inv.token}
+                    className="font-semibold"
+                  />
                   <Link
                     href={`/pay/${inv.id}`}
                     className="btn-ghost text-xs"
@@ -257,7 +269,7 @@ function CopyReminderButton({ invoice }: { invoice: Invoice }) {
         : `/pay/${invoice.id}`;
     const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
       invoice.amount,
-      token.decimals
+      token.decimals,
     )} ${token.symbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${url}`;
     try {
       await navigator.clipboard.writeText(text);
@@ -269,7 +281,11 @@ function CopyReminderButton({ invoice }: { invoice: Invoice }) {
   }
 
   return (
-    <button onClick={remind} className="btn-ghost text-xs" title="Copy payment reminder">
+    <button
+      onClick={remind}
+      className="btn-ghost text-xs"
+      title="Copy payment reminder"
+    >
       {copied ? "Copied ✓" : "Remind"}
     </button>
   );

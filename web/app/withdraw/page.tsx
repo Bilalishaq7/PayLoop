@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useWallet } from "@/components/WalletProvider";
+import { ConnectPrompt } from "@/components/ConnectPrompt";
 import { Alert, Spinner } from "@/components/ui";
 import { getTokenBalance } from "@/lib/contract";
 import { formatAmount, formatNaira, fromBaseUnits } from "@/lib/format";
@@ -17,7 +18,7 @@ const NGN_PER_USDC = 1560;
 type Stage = "form" | "processing" | "done";
 
 export default function WithdrawPage() {
-  const { address, connect, connecting } = useWallet();
+  const { address } = useWallet();
   const [balance, setBalance] = useState<bigint | null>(null);
   const [amount, setAmount] = useState("");
   const [bank, setBank] = useState("");
@@ -27,7 +28,10 @@ export default function WithdrawPage() {
   const [ref, setRef] = useState("");
 
   useEffect(() => {
-    if (address) getTokenBalance(address).then(setBalance).catch(() => {});
+    if (address)
+      getTokenBalance(address)
+        .then(setBalance)
+        .catch(() => {});
   }, [address]);
 
   const naira = amount ? Number(amount) * NGN_PER_USDC : 0;
@@ -77,12 +81,7 @@ export default function WithdrawPage() {
       </Alert>
 
       {!address ? (
-        <div className="card flex flex-col items-center gap-4 py-10 text-center">
-          <p className="text-slate-300">Connect your wallet to withdraw.</p>
-          <button onClick={connect} disabled={connecting} className="btn-primary">
-            {connecting ? "Connecting…" : "Connect wallet"}
-          </button>
-        </div>
+        <ConnectPrompt message="Connect your wallet to withdraw." />
       ) : stage === "done" ? (
         <div className="card space-y-4 text-center">
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-500/15 text-3xl">
@@ -91,8 +90,8 @@ export default function WithdrawPage() {
           <div>
             <p className="text-xl font-bold">Withdrawal initiated</p>
             <p className="mt-1 text-sm text-slate-400">
-              {formatNaira(naira)} is on its way to your{" "}
-              {bankName} account ending {accountNo.slice(-4)}.
+              ₦{naira.toLocaleString()} is on its way to your {bank} account
+              ending {accountNo.slice(-4)}.
             </p>
           </div>
           <div className="rounded-lg bg-ink-900/60 p-3 text-sm">
