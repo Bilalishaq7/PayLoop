@@ -1,5 +1,55 @@
 #![cfg(test)]
 
+//! # PayLoop Invoice Contract Test Suite
+//!
+//! This module contains comprehensive test coverage for the PayLoop invoice and escrow contract.
+//! Tests are organized into three main categories:
+//!
+//! ## 1. Core Functionality Tests (using `mock_all_auths`)
+//!
+//! These tests verify the invoice lifecycle and business logic:
+//! - `create_then_fund_pays_freelancer`: Verifies the atomic create → pending → funded → paid flow with instant token release
+//! - `history_lists_freelancer_invoices_in_order`: Confirms invoices are stored and retrieved in creation order
+//! - `double_funding_is_rejected`: Ensures invoices cannot be funded twice (idempotence guard)
+//! - `funding_missing_invoice_errors`: Validates error handling for non-existent invoices
+//! - `rejects_non_positive_amount`: Enforces amount validation (must be > 0)
+//! - `cannot_initialize_twice`: Prevents contract reinitialization after setup
+//! - `timestamps_are_recorded`: Validates created_at and paid_at ledger timestamps
+//!
+//! ## 2. Authorization Tests (using `MockAuth` without `mock_all_auths`)
+//!
+//! These tests use `MockAuth` to explicitly verify which party must sign each operation.
+//! They ensure exactly the required authorization is enforced and no extra permissions leak:
+//! - `create_invoice_succeeds_with_freelancer_auth`: Only the freelancer can create an invoice
+//! - `create_invoice_fails_without_freelancer_auth`: Creation fails without the freelancer's signature
+//! - `create_invoice_rejects_impostor_auth`: An impostor cannot forge an invoice by signing with their key
+//! - `fund_invoice_succeeds_with_client_auth`: Only the named client can fund an invoice (includes nested token.transfer auth)
+//! - `fund_invoice_fails_without_client_auth`: Funding fails without the client's signature; invoice remains Pending
+//!
+//! ## 3. Edge Cases and Pagination Tests
+//!
+//! These tests cover boundary conditions and advanced query operations:
+//! - `create_invoice_ids_increment`: Verifies monotonic ID allocation (1, 2, 3, ...)
+//! - `rejects_self_directed_invoice`: Prevents an address from both creating and being the client
+//! - `rejects_empty_description`: Validates non-empty description requirement
+//! - `funding_whole_balance_succeeds_exactly`: Funds succeeds when client balance exactly matches invoice amount
+//! - `funding_short_balance_errors`: Prevents funding when balance is insufficient
+//! - `history_for_unknown_freelancer_is_empty`: Correctly returns empty list for new addresses
+//! - `invoice_count_returns_next_id`: Counter reflects the next invoice ID to be assigned
+//! - `get_invoice_range_respects_bounds`: Pagination with start offset and length bounds
+//! - `get_invoice_range_for_unknown_freelancer_is_empty`: Pagination gracefully handles unknown freelancers
+//! - `get_client_history_tracks_invoices_owed`: Tracks all invoices where an address is the client
+//! - `get_client_history_for_unknown_client_is_empty`: Client history empty for new addresses
+//!
+//! ## Authorization Pattern
+//!
+//! This suite demonstrates the Soroban authorization best-practice pattern:
+//! 1. **Convenience tests** use `mock_all_auths()` to quickly verify business logic
+//! 2. **Authorization tests** use `MockAuth` with `MockAuthInvoke` to prove exactly which party signed each call
+//! 3. Nested token transfers include `sub_invokes` to show the authorization chain
+//!
+//! This pattern is designed to be copied by other Soroban teams building multi-party contracts.
+
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
