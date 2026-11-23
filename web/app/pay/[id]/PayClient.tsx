@@ -17,6 +17,7 @@ import {
 import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
 import { config, isConfigured } from "@/lib/config";
 import { useTokenMeta } from "@/lib/use-token-meta";
+import { buildReminderMessage, isInvoiceOwner } from "@/lib/invoice-helpers";
 
 export default function PayClient({ id }: { id: string }) {
   const { address, connect, connecting } = useWallet();
@@ -243,7 +244,7 @@ export default function PayClient({ id }: { id: string }) {
                       "reminder",
                       buildReminderMessage({
                         id: invoice.id,
-                        amountLabel: `${formatAmount(invoice.amount)} ${config.tokenSymbol}`,
+                        amountLabel: `${formatAmount(invoice.amount, token.decimals)} ${token.symbol}`,
                         description: humanizeDescription(invoice.description),
                         url: payUrl,
                       })
