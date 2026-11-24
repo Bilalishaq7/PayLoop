@@ -18,6 +18,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { config, getTokenConfig, tokens } from "./config";
 import { errorMessage } from "./async-resource";
+import { isValidInvoiceId } from "./invoice-helpers";
 import { signXdr } from "./wallet";
 import {
   createScanCache,
@@ -189,6 +190,9 @@ export async function getAllowedTokenIds(): Promise<string[]> {
 }
 
 export async function getInvoice(id: string): Promise<Invoice | null> {
+  // Ids that can never exist (non-numeric, negative, > u64::MAX) are "not
+  // found" without touching the RPC or throwing from BigInt().
+  if (!isValidInvoiceId(id)) return null;
   try {
     const raw = await simulateRead("get_invoice", [
       nativeToScVal(BigInt(id), { type: "u64" }),
