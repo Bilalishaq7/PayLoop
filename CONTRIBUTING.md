@@ -59,6 +59,21 @@ npm run lint
 npm run build
 ```
 
+### Formatting
+
+The `web/` project is formatted with [Prettier](https://prettier.io) (config in
+`web/.prettierrc`, editor defaults in the root `.editorconfig`). Before opening
+a PR that touches `web/`, run:
+
+```bash
+cd web
+npm run format        # reformat changed files in place
+npm run format:check  # verify formatting without changing files
+```
+
+CI runs `format:check` on every PR. Formatting the existing `web/` tree is a
+separate one-time step, so do not reformat unrelated files in your PR.
+
 CI (`.github/workflows/`) runs the same checks on every PR; both must be green
 for review.
 
@@ -142,12 +157,12 @@ list is the short version of what is below.
 - `contracts/invoice/src/test.rs` must pass in full (27 tests; `MockAuth`-based
   authorization tests sit next to `mock_all_auths` convenience tests — new
   state-changing entrypoints should get both).
-- Do not weaken or delete existing tests to make a change pass. If a test is
+- Do not weaken or delete existing tests to maile a change pass. If a test is
   genuinely obsolete, explain why in the PR and update it purposefully.
 
 ## Where to start
 
-Good first issues are labeled `good first issue`. Another low-risk entry point
+Good first issues are labeled `good first issue` . Another low-risk entry point
 is improving docs or tests for the contract
-(`contracts/invoice/README.md` documents the lifecycle, auth matrix and error
+`((contracts/invoice/README.md` documents the lifecycle, auth matrix and error
 codes).
