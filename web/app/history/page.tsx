@@ -1,13 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
-import { Alert, EmptyState, Spinner, StatusBadge } from "@/components/ui";
+import { ConnectPrompt } from "@/components/ConnectPrompt";
+import { Alert, EmptyState, OverdueBadge, Spinner, StatusBadge } from "@/components/ui";
+import { AddressChip } from "@/components/AddressChip";
+import { isOverdue } from "@/lib/invoice-helpers";
+import { ScanStatus } from "@/components/ScanStatus";
 import { InvoicePreview } from "@/components/InvoiceDocument";
-import { getAllInvoices, type Invoice } from "@/lib/contract";
-import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
-import { config, isConfigured } from "@/lib/config";
+import { ShareMenu } from "@/components/ShareMenu";
+import type { Invoice } from "@/lib/contract";
+import { useInvoiceScan } from "@/lib/use-invoice-scan";
+import {
+  formatAmount,
+  formatDate,
+  humanizeDescription,
+} from "@/lib/format";
+import { getTokenConfig, isConfigured } from "@/lib/config";
+import { TokenAmount } from "@/components/TokenAmount";
 
 type StatusFilter = "all" | "Pending" | "Paid";
 type RoleFilter = "all" | "freelancer" | "client";
@@ -15,36 +26,24 @@ type RoleFilter = "all" | "freelancer" | "client";
 // Personal invoice history with search + status/role filtering. Addresses the
 // top Level-4 feedback requests ("invoice history", "search and filtering").
 export default function HistoryPage() {
-  const { address, connect, connecting } = useWallet();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { address } = useWallet();
+  const {
+    invoices,
+    error,
+    reachedCap,
+    scannedThrough,
+    loading,
+    retry: load,
+  } = useInvoiceScan();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [role, setRole] = useState<RoleFilter>("all");
   const [preview, setPreview] = useState<Invoice | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const all = await getAllInvoices();
-      setInvoices(all);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load invoice history.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
   const mine = useMemo(() => {
     if (!address) return [];
     return invoices.filter(
-      (i) => i.freelancer === address || i.client === address
+      (i) => i.freelancer === address || i.client === address,
     );
   }, [invoices, address]);
 
@@ -57,15 +56,16 @@ export default function HistoryPage() {
         if (role === "freelancer" && i.freelancer !== address) return false;
         if (role === "client" && i.client !== address) return false;
         if (!q) return true;
-        const counterparty =
-          i.freelancer === address ? i.client : i.freelancer;
+        const counterparty = i.freelancer === address ? i.client : i.freelancer;
         return (
           i.id.toLowerCase().includes(q) ||
           i.description.toLowerCase().includes(q) ||
           i.freelancer.toLowerCase().includes(q) ||
           i.client.toLowerCase().includes(q) ||
           counterparty.toLowerCase().includes(q) ||
-          formatAmount(i.amount).includes(q) ||
+          formatAmount(i.amount, getTokenConfig(i.token).decimals).includes(
+            q,
+          ) ||
           humanizeDescription(i.description).toLowerCase().includes(q)
         );
       })
@@ -73,9 +73,7 @@ export default function HistoryPage() {
   }, [mine, query, status, role, address]);
 
   if (!isConfigured()) {
-    return (
-      <Alert kind="info">The contract isn&apos;t configured yet.</Alert>
-    );
+    return <Alert kind="info">The contract isn&apos;t configured yet.</Alert>;
   }
 
   if (!address) {
@@ -87,26 +85,24 @@ export default function HistoryPage() {
             Search, filter and export every invoice you&apos;ve created or paid.
           </p>
         </div>
-        <div className="card flex flex-col items-center gap-4 py-10 text-center">
-          <p className="text-slate-300">
-            Connect your wallet to see your invoice history.
-          </p>
-          <button onClick={connect} disabled={connecting} className="btn-primary">
-            {connecting ? "Connecting…" : "Connect wallet"}
-          </button>
-        </div>
+        <ConnectPrompt message="Connect your wallet to see your invoice history." />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Invoice history</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Every invoice where you&apos;re the freelancer or the client, with
-          search and filtering.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Invoice history</h1>
+          <p className="mt-1 text-sm text-slate-400">
+            Every invoice where you&apos;re the freelancer or the client, with
+            search and filtering.
+          </p>
+        </div>
+        <Link href="/statement" className="btn-ghost text-xs">
+          Income statement
+        </Link>
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -138,23 +134,31 @@ export default function HistoryPage() {
                 role === r ? "ring-1 ring-brand-400" : ""
               }`}
             >
-              {r === "all" ? "Any role" : r === "freelancer" ? "I invoiced" : "I paid"}
+              {r === "all"
+                ? "Any role"
+                : r === "freelancer"
+                  ? "I invoiced"
+                  : "I paid"}
             </button>
           ))}
         </div>
-        <button onClick={load} disabled={loading} className="btn-ghost ml-auto text-xs">
+        <button
+          onClick={load}
+          disabled={loading}
+          className="btn-ghost ml-auto text-xs"
+        >
           {loading ? <Spinner /> : "Refresh"}
         </button>
       </div>
 
-      {error && (
-        <Alert kind="error">
-          <span>{error}</span>{" "}
-          <button onClick={load} className="ml-2 underline">
-            Retry
-          </button>
-        </Alert>
-      )}
+      <ScanStatus
+        error={error}
+        reachedCap={reachedCap}
+        count={invoices.length}
+        scannedThrough={scannedThrough}
+        loading={loading}
+        onRetry={load}
+      />
 
       {loading && mine.length === 0 ? (
         <div className="space-y-3">
@@ -205,24 +209,24 @@ export default function HistoryPage() {
                       #{inv.id}
                     </span>
                     <StatusBadge status={inv.status} />
+                    {isOverdue(inv) && <OverdueBadge />}
                   </div>
                   <p className="truncate text-sm font-medium">
                     {humanizeDescription(inv.description) || "—"}
                   </p>
                   <p className="text-xs text-slate-400">
                     {isFreelancer ? "Client" : "Freelancer"}:{" "}
-                    <span className="font-mono">{shortAddress(counterparty)}</span>
+                    <AddressChip address={counterparty} />
                     {" · "}Created {formatDate(inv.createdAt)}
                     {inv.dueDate > 0n && ` · Due ${formatDate(inv.dueDate)}`}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold">
-                    {formatAmount(inv.amount)}{" "}
-                    <span className="text-xs font-normal text-slate-400">
-                      {config.tokenSymbol}
-                    </span>
-                  </span>
+                  <TokenAmount
+                    amount={inv.amount}
+                    tokenId={inv.token}
+                    className="font-semibold"
+                  />
                   <Link
                     href={`/pay/${inv.id}`}
                     className="btn-ghost text-xs"
@@ -238,7 +242,7 @@ export default function HistoryPage() {
                     PDF
                   </button>
                   {inv.status === "Pending" && (
-                    <CopyReminderButton invoice={inv} />
+                    <ShareMenu invoice={inv} buttonClassName="btn-ghost text-xs" />
                   )}
                 </div>
               </div>
@@ -257,31 +261,4 @@ export default function HistoryPage() {
   );
 }
 
-// Copies a ready-to-send payment reminder message to the clipboard. Covers the
-// Level-4 "payment reminders" feedback request.
-function CopyReminderButton({ invoice }: { invoice: Invoice }) {
-  const [copied, setCopied] = useState(false);
 
-  async function remind() {
-    const url =
-      typeof window !== "undefined"
-        ? `${window.location.origin}/pay/${invoice.id}`
-        : `/pay/${invoice.id}`;
-    const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
-      invoice.amount
-    )} ${config.tokenSymbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${url}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      window.location.href = `/pay/${invoice.id}`;
-    }
-  }
-
-  return (
-    <button onClick={remind} className="btn-ghost text-xs" title="Copy payment reminder">
-      {copied ? "Copied ✓" : "Remind"}
-    </button>
-  );
-}

@@ -1,50 +1,41 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import { Alert, Spinner, StatusBadge, EmptyState } from "@/components/ui";
-import { getAllInvoices, type Invoice } from "@/lib/contract";
+import { ScanStatus } from "@/components/ScanStatus";
+import { AddressChip } from "@/components/AddressChip";
+import type { Invoice } from "@/lib/contract";
+import { useInvoiceScan } from "@/lib/use-invoice-scan";
 import {
   formatAmount,
   formatDate,
   fromBaseUnits,
   humanizeDescription,
-  shortAddress,
 } from "@/lib/format";
-import { config, explorer, isConfigured } from "@/lib/config";
+import { config, explorer, getTokenConfig, isConfigured } from "@/lib/config";
+import { TokenAmount } from "@/components/TokenAmount";
 
 // Public activity feed: reads every invoice straight off the contract and
 // surfaces aggregate usage. Doubles as verifiable proof of wallet interactions
 // for the submission — every freelancer/client address links to the explorer.
 export default function ActivityPage() {
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const all = await getAllInvoices();
-      setInvoices([...all].reverse()); // newest first
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load on-chain activity.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const scan = useInvoiceScan();
+  const invoices = useMemo(
+    () => [...scan.invoices].reverse(), // newest first
+    [scan.invoices]
+  );
+  const { loading, error, reachedCap, scannedThrough } = scan;
+  const load = scan.retry;
 
   function downloadCsv() {
-    // Export every on-chain invoice as CSV — reusable proof of usage activity
-    // for analytics / reporting without a backend.
+    // Export the loaded on-chain invoices as CSV, reusable proof of usage
+    // activity for analytics / reporting without a backend.
     const header = [
       "invoice_id",
       "description",
-      "amount_usdc",
+      "amount",
+      "token_id",
       "status",
       "freelancer_address",
       "client_address",
@@ -58,7 +49,8 @@ export default function ActivityPage() {
         [
           i.id,
           esc(humanizeDescription(i.description)),
-          formatAmount(i.amount),
+          formatAmount(i.amount, getTokenConfig(i.token).decimals),
+          i.token,
           i.status,
           i.freelancer,
           i.client,
@@ -94,7 +86,10 @@ export default function ActivityPage() {
     uniqueWallets.add(i.freelancer);
     uniqueWallets.add(i.client);
   });
-  const totalPaid = paid.reduce((acc, i) => acc + i.amount, 0n);
+  const paidByToken = new Map<string, bigint>();
+  paid.forEach((i) =>
+    paidByToken.set(i.token, (paidByToken.get(i.token) ?? 0n) + i.amount)
+  );
   const { granularity, buckets } = bucketSettledVolume(paid);
 
   return (
@@ -103,8 +98,8 @@ export default function ActivityPage() {
         <div>
           <h1 className="text-2xl font-bold">On-chain activity</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Every invoice recorded on the PayLoop contract, live from Stellar
-            testnet.{" "}
+            A live view of invoices recorded on the PayLoop contract, newest
+            first.{" "}
             <a
               href={explorer.contract(config.contractId)}
               target="_blank"
@@ -142,10 +137,18 @@ export default function ActivityPage() {
           value={String(uniqueWallets.size)}
           tone="brand"
         />
-        <Stat
-          label={`Settled (${config.tokenSymbol})`}
-          value={formatAmount(totalPaid)}
-        />
+        <div className="card">
+          <p className="text-xs text-slate-400">Settled</p>
+          {paidByToken.size === 0 ? (
+            <p className="mt-1 text-2xl font-bold">0</p>
+          ) : (
+            [...paidByToken].map(([tokenId, amount]) => (
+              <p key={tokenId} className="mt-1 text-2xl font-bold">
+                <TokenAmount amount={amount} tokenId={tokenId} />
+              </p>
+            ))
+          )}
+        </div>
       </div>
 
       {invoices.length > 0 && (
@@ -155,14 +158,14 @@ export default function ActivityPage() {
         </div>
       )}
 
-      {error && (
-        <Alert kind="error">
-          <span>{error}</span>{" "}
-          <button onClick={load} className="ml-2 underline">
-            Retry
-          </button>
-        </Alert>
-      )}
+      <ScanStatus
+        error={error}
+        reachedCap={reachedCap}
+        count={invoices.length}
+        scannedThrough={scannedThrough}
+        loading={loading}
+        onRetry={load}
+      />
 
       {loading && invoices.length === 0 ? (
         <div className="space-y-3">
@@ -214,7 +217,7 @@ export default function ActivityPage() {
                     <WalletLink addr={inv.client} />
                   </td>
                   <td className="px-4 py-3 text-right font-semibold">
-                    {formatAmount(inv.amount)}
+                    <TokenAmount amount={inv.amount} tokenId={inv.token} />
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={inv.status} />
@@ -241,7 +244,7 @@ export default function ActivityPage() {
                     {humanizeDescription(inv.description) || "—"}
                   </span>
                   <span className="ml-2 shrink-0 font-semibold">
-                    {formatAmount(inv.amount)} {config.tokenSymbol}
+                    <TokenAmount amount={inv.amount} tokenId={inv.token} />
                   </span>
                 </div>
                 <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs text-slate-400">
@@ -287,7 +290,12 @@ function Stat({
   );
 }
 
-type VolumeBucket = { key: string; label: string; amount: bigint };
+type VolumeBucket = {
+  key: string;
+  label: string;
+  amount: bigint;
+  tokenId: string;
+};
 
 // Groups paid invoices by paidAt into day buckets, or week buckets (Mon-start,
 // UTC) once the paid history spans more than 3 weeks — keeps the chart legible
@@ -303,7 +311,10 @@ function bucketSettledVolume(paidInvoices: Invoice[]): {
   const spanDays = (Math.max(...times) - Math.min(...times)) / 86_400_000;
   const granularity: "day" | "week" = spanDays > 21 ? "week" : "day";
 
-  const map = new Map<string, { start: Date; amount: bigint }>();
+  const map = new Map<
+    string,
+    { start: Date; amount: bigint; tokenId: string }
+  >();
   for (const inv of withDates) {
     const d = new Date(Number(inv.paidAt) * 1000);
     const start = new Date(
@@ -313,8 +324,8 @@ function bucketSettledVolume(paidInvoices: Invoice[]): {
       const dayOfWeek = (start.getUTCDay() + 6) % 7; // Monday = 0
       start.setUTCDate(start.getUTCDate() - dayOfWeek);
     }
-    const key = start.toISOString().slice(0, 10);
-    const entry = map.get(key) ?? { start, amount: 0n };
+    const key = `${start.toISOString().slice(0, 10)}:${inv.token}`;
+    const entry = map.get(key) ?? { start, amount: 0n, tokenId: inv.token };
     entry.amount += inv.amount;
     map.set(key, entry);
   }
@@ -322,13 +333,14 @@ function bucketSettledVolume(paidInvoices: Invoice[]): {
   const buckets = [...map.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .slice(-12)
-    .map(([key, { start, amount }]) => ({
+    .map(([key, { start, amount, tokenId }]) => ({
       key,
       label: start.toLocaleDateString(undefined, {
         month: "short",
         day: "numeric",
       }),
       amount,
+      tokenId,
     }));
 
   return { granularity, buckets };
@@ -399,26 +411,28 @@ function SettledVolumeChart({
     );
   }
 
-  const maxAmount = buckets.reduce(
-    (m, b) => (b.amount > m ? b.amount : m),
-    0n
-  );
-  const maxHuman = Number(fromBaseUnits(maxAmount)) || 1;
+  const humanFor = (b: VolumeBucket) =>
+    Number(fromBaseUnits(b.amount, getTokenConfig(b.tokenId).decimals));
+  const maxHuman = Math.max(...buckets.map(humanFor), 0) || 1;
 
   return (
     <div className="card space-y-3">
       <h2 className="text-sm font-semibold">
-        Settled volume by {granularity} ({config.tokenSymbol})
+        Settled volume by {granularity} (per token)
       </h2>
       <div className="flex h-32 items-end gap-2">
         {buckets.map((b) => {
-          const human = Number(fromBaseUnits(b.amount));
+          const human = humanFor(b);
           const pct = human > 0 ? Math.max((human / maxHuman) * 100, 4) : 0;
+          const symbol = getTokenConfig(b.tokenId).symbol;
           return (
             <div
               key={b.key}
               className="flex h-full flex-1 flex-col items-center justify-end gap-1"
-              title={`${b.label}: ${formatAmount(b.amount)} ${config.tokenSymbol}`}
+              title={`${b.label}: ${formatAmount(
+                b.amount,
+                getTokenConfig(b.tokenId).decimals
+              )} ${symbol}`}
             >
               <div
                 className="w-full rounded-t-md bg-brand-500"
@@ -434,14 +448,5 @@ function SettledVolumeChart({
 }
 
 function WalletLink({ addr }: { addr: string }) {
-  return (
-    <a
-      href={explorer.account(addr)}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="font-mono text-brand-300 underline-offset-2 hover:underline"
-    >
-      {shortAddress(addr)}
-    </a>
-  );
+  return <AddressChip address={addr} className="text-brand-300" />;
 }

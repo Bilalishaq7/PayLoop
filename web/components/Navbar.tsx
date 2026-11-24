@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useWallet } from "./WalletProvider";
 import { useTheme } from "./ThemeProvider";
+import { LogoMark } from "./LogoMark";
 import { shortAddress } from "@/lib/format";
 
 const links = [
@@ -17,7 +18,7 @@ const links = [
 ];
 
 export function Navbar() {
-  const { address, connect, connecting, disconnect } = useWallet();
+  const { address, connect, connecting, disconnect, error, clearError, installed } = useWallet();
   const { theme, toggle } = useTheme();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -36,16 +37,17 @@ export function Navbar() {
           onClick={() => setOpen(false)}
         >
           <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-500 text-white">
-            ₽
+            <LogoMark className="h-5 w-5" />
           </span>
           <span className="text-lg tracking-tight">PayLoop</span>
         </Link>
 
-        <nav className="hidden items-center gap-1 lg:flex">
+        <nav aria-label="Primary" className="hidden items-center gap-1 lg:flex">
           {links.map((l) => (
             <Link
               key={l.href}
               href={l.href}
+              aria-current={pathname === l.href ? "page" : undefined}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                 pathname === l.href
                   ? "bg-white/10 text-white"
@@ -111,6 +113,7 @@ export function Navbar() {
       {open && (
         <nav
           id="mobile-nav"
+          aria-label="Primary (mobile)"
           className="border-t border-white/10 bg-ink-900/95 px-4 py-2 lg:hidden"
         >
           {links.map((l) => (
@@ -118,6 +121,7 @@ export function Navbar() {
               key={l.href}
               href={l.href}
               onClick={() => setOpen(false)}
+              aria-current={pathname === l.href ? "page" : undefined}
               className={`block rounded-lg px-3 py-2.5 text-sm font-medium transition ${
                 pathname === l.href
                   ? "bg-white/10 text-white"
@@ -134,6 +138,42 @@ export function Navbar() {
             ? How it works
           </button>
         </nav>
+      )}
+
+      {/* Wallet connection error alert */}
+      {error && (
+        <div
+          role="alert"
+          aria-live="polite"
+          className="border-t border-rose-500/20 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-200"
+        >
+          <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-rose-300">Connection error:</span>
+              <span>{error}</span>
+              {(!installed ||
+                error.toLowerCase().includes("freighter") ||
+                error.toLowerCase().includes("not found") ||
+                error.toLowerCase().includes("install")) && (
+                <a
+                  href="https://www.freighter.app/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-white underline hover:text-rose-100"
+                >
+                  Install Freighter →
+                </a>
+              )}
+            </div>
+            <button
+              onClick={clearError}
+              aria-label="Dismiss error"
+              className="rounded p-1 text-rose-300 transition hover:bg-rose-500/20 hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
       )}
     </header>
   );

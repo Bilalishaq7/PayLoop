@@ -8,6 +8,8 @@ import {
   TransactionBuilder,
   rpc,
 } from "@stellar/stellar-sdk";
+import { createRateLimiter } from "@/lib/rate-limiter";
+import { errorMessage } from "@/lib/async-resource";
 
 // Server-only faucet: mints test USDC (a Stellar Asset Contract) to a user.
 // The SAC admin is the asset issuer; its secret lives in USDC_ISSUER_SECRET and
@@ -21,25 +23,15 @@ const MINT_AMOUNT = 5_000_000_000n; // 500 USDC at 7 decimals
 // rest of the app runs on.
 const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
 
-// Best-effort rate limiting. Serverless instances (Vercel) do not share
-// memory, so this caps per-wallet mints per warm instance rather than
-// globally — enough to stop rapid re-taps in the intended demo flow, with the
-// real answer for a stricter budget being an external store (see
-// docs/ARCHITECTURE.md). Address -> timestamp of last successful mint.
-const RATE_WINDOW_MS = 60 * 60 * 1000; // one mint per wallet per hour
-const lastMintByAddress = new Map<string, number>();
-
-function rateLimited(address: string): number | null {
-  const now = Date.now();
-  // Periodically drop expired entries so the map cannot grow unbounded.
-  for (const [addr, ts] of lastMintByAddress) {
-    if (now - ts > RATE_WINDOW_MS) lastMintByAddress.delete(addr);
-  }
-  const last = lastMintByAddress.get(address);
-  if (last === undefined) return null;
-  const remainingMs = RATE_WINDOW_MS - (now - last);
-  return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : null;
-}
+// Rate limiter: can be in-memory (default, per-instance) or backed by
+// Upstash Redis / Vercel KV for global limits. See RATE_LIMITER_* env vars
+// and docs/ARCHITECTURE.md for setup.
+const rateLimiter = createRateLimiter({
+  perIpLimitPerHour: Number(process.env.RATE_LIMITER_IP_LIMIT_PER_HOUR ?? 5),
+  globalDailyCapTokens: BigInt(
+    process.env.RATE_LIMITER_GLOBAL_DAILY_CAP ?? 100_000_000_000n,
+  ),
+});
 
 export async function POST(req: Request) {
   const issuerSecret = process.env.USDC_ISSUER_SECRET;
@@ -52,14 +44,14 @@ export async function POST(req: Request) {
   if (!issuerSecret || !tokenId) {
     return NextResponse.json(
       { error: "Faucet is not configured on the server." },
-      { status: 503 }
+      { status: 503 },
     );
   }
 
   if (passphrase !== TESTNET_PASSPHRASE) {
     return NextResponse.json(
       { error: "Faucet is available on testnet only." },
-      { status: 503 }
+      { status: 503 },
     );
   }
 
@@ -72,19 +64,25 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json(
       { error: "A valid wallet address is required." },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
-  const retryAfterSeconds = rateLimited(address);
+  // Extract client IP (works on Vercel and most proxies)
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown";
+
+  const retryAfterSeconds = await rateLimiter.checkLimit(ip, address);
   if (retryAfterSeconds !== null) {
     return NextResponse.json(
       {
         error: `Faucet already dispensed to this wallet recently. Try again in ${Math.ceil(
-          retryAfterSeconds / 60
+          retryAfterSeconds / 60,
         )} minute(s).`,
       },
-      { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } }
+      { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
     );
   }
 
@@ -104,8 +102,8 @@ export async function POST(req: Request) {
         token.call(
           "mint",
           new Address(address).toScVal(),
-          nativeToScVal(MINT_AMOUNT, { type: "i128" })
-        )
+          nativeToScVal(MINT_AMOUNT, { type: "i128" }),
+        ),
       )
       .setTimeout(60)
       .build();
@@ -117,7 +115,7 @@ export async function POST(req: Request) {
     if (sent.status === "ERROR") {
       return NextResponse.json(
         { error: "Mint transaction was rejected." },
-        { status: 502 }
+        { status: 502 },
       );
     }
 
@@ -135,16 +133,16 @@ export async function POST(req: Request) {
     if (result.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
       return NextResponse.json(
         { error: "Mint did not confirm in time. Try again shortly." },
-        { status: 504 }
+        { status: 504 },
       );
     }
 
-    lastMintByAddress.set(address, Date.now());
+    await rateLimiter.recordMint(ip, address, MINT_AMOUNT);
     return NextResponse.json({ ok: true, hash: sent.hash });
-  } catch (e: any) {
+  } catch (e) {
     return NextResponse.json(
-      { error: e?.message ?? "Faucet failed unexpectedly." },
-      { status: 500 }
+      { error: errorMessage(e, "Faucet failed unexpectedly.") },
+      { status: 500 },
     );
   }
 }

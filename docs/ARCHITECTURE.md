@@ -5,6 +5,9 @@ truth for invoices, and a Next.js web app that reads/writes it through the user'
 Freighter wallet. There is no application database — all invoice state lives
 on-chain, which is what makes the income history portable and tamper-proof.
 
+Locked design decisions are recorded as
+[Architecture Decision Records](adr/README.md) in `docs/adr/`.
+
 ```
 ┌─────────────────┐        sign tx        ┌──────────────────┐
 │  Freelancer /   │ ───────────────────▶  │   Freighter      │
@@ -36,19 +39,21 @@ Rust / `soroban-sdk` 27. State is keyed by an enum `DataKey`:
 
 Entry points:
 
-| Function | Auth | Effect |
-| --- | --- | --- |
-| `initialize(admin, payment_token)` | admin | one-time; sets default token + id counter; **admin has no post-init powers** |
-| `create_invoice(freelancer, client, amount, description, due_date)` | freelancer | rejects non-positive amounts, self-directed invoices, empty descriptions; records a `Pending` invoice, appends to history, emits `InvoiceCreated`, returns id |
-| `fund_invoice(invoice_id)` | client | pre-checks the client balance (typed `InsufficientBalance` error instead of an opaque token trap), then atomic `token.transfer(client → freelancer)`, marks `Paid`, emits `InvoicePaid` |
-| `release_funds(invoice_id)` | — | reserved seam for future held-escrow; no-op in the instant-release MVP |
-| `get_invoice(id)` / `get_invoice_history(freelancer)` | — (read) | reads |
-| `default_token_address()` / `version()` | — (read) | metadata |
+| Function                                                            | Auth       | Effect                                                                                                                                                                                  |
+| ------------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `initialize(admin, payment_token)`                                  | admin      | one-time; sets default token, allowlist and id counter; admin can only grow the allowlist afterwards                                                                                    |
+| `add_allowed_token(admin, token)`                                   | admin      | adds a token to the allowlist (append-only)                                                                                                                                              |
+| `create_invoice(freelancer, client, amount, description, due_date)` | freelancer | default-token variant; rejects non-positive amounts, self-directed invoices, empty descriptions; records a `Pending` invoice, appends to history, emits `InvoiceCreated`, returns id     |
+| `create_invoice_with_token(..., token)`                             | freelancer | same, with an explicit allowlisted token stored on the invoice (`TokenNotAllowed` otherwise)                                                                                            |
+| `fund_invoice(invoice_id)`                                          | client     | pre-checks the client balance (typed `InsufficientBalance` error instead of an opaque token trap), then atomic `token.transfer(client → freelancer)`, marks `Paid`, emits `InvoicePaid` |
+| `release_funds(invoice_id)`                                         | —          | reserved seam for future held-escrow; no-op in the instant-release MVP                                                                                                                  |
+| `get_invoice(id)` / `get_invoice_history(freelancer)`               | — (read)   | reads                                                                                                                                                                                   |
+| `default_token_address()` / `get_allowed_tokens()` / `version()`    | — (read)   | metadata                                                                                                                                                                                |
 
 Errors are a typed `contracterror` enum (`NotInitialized`, `AlreadyInitialized`,
 `InvoiceNotFound`, `AlreadyPaid`, `InvalidAmount`, and — appended after the
 v1 testnet deployment, keeping codes 1–5 wire-compatible —
-`InvalidDescription`, `InvalidParties`, `InsufficientBalance`).
+`InvalidDescription`, `InvalidParties`, `InsufficientBalance`, `TokenNotAllowed`).
 
 Eighteen unit tests in `contracts/invoice/src/test.rs` cover the
 create→fund→paid loop, history ordering and empty-history, double-funding
@@ -92,18 +97,18 @@ Next.js 15 App Router, React 19, TypeScript, Tailwind. Key modules:
 
 ### Routes
 
-| Route | Type | Purpose |
-| --- | --- | --- |
-| `/` | static | landing |
-| `/create` | static | freelancer creates an invoice (preview → 1 signed tx) |
-| `/dashboard` | static | freelancer's invoices, totals, faucet, reminders |
-| `/pay/[id]` | dynamic | client funds an invoice (1 signed tx) |
-| `/history` | static | personal invoice history with search + status/role filters, PDF + remind |
-| `/withdraw` | static | mocked USDC→Naira off-ramp |
-| `/activity` | static | public on-chain feed + usage stats + CSV export (proof of interactions) |
-| `/pitch` | static | live pitch deck (mirrors the .pptx) |
-| `/api/faucet` | serverless | mints test USDC (holds issuer key, server-only) |
-| `/api/feedback` | serverless | forwards user feedback to an optional webhook |
+| Route           | Type       | Purpose                                                                  |
+| --------------- | ---------- | ------------------------------------------------------------------------ |
+| `/`             | static     | landing                                                                  |
+| `/create`       | static     | freelancer creates an invoice (preview → 1 signed tx)                    |
+| `/dashboard`    | static     | freelancer's invoices, totals, faucet, reminders                         |
+| `/pay/[id]`     | dynamic    | client funds an invoice (1 signed tx)                                    |
+| `/history`      | static     | personal invoice history with search + status/role filters, PDF + remind |
+| `/withdraw`     | static     | mocked USDC→Naira off-ramp                                               |
+| `/activity`     | static     | public on-chain feed + usage stats + CSV export (proof of interactions)  |
+| `/pitch`        | static     | live pitch deck (mirrors the .pptx)                                      |
+| `/api/faucet`   | serverless | mints test USDC (holds issuer key, server-only)                          |
+| `/api/feedback` | serverless | forwards user feedback to an optional webhook                            |
 
 ## Data flow: the core loop
 
@@ -122,7 +127,11 @@ Next.js 15 App Router, React 19, TypeScript, Tailwind. Key modules:
   `NEXT_PUBLIC_SENTRY_DSN` is set; `error.tsx` and `global-error.tsx` report
   render errors; `instrumentation.ts` wires request errors.
 - **Vercel Analytics** — `<Analytics />` in the root layout for page/usage
-  tracking.
+  tracking, plus privacy-safe funnel events fired once per successful action
+  via `trackEvent` in `web/lib/analytics.ts`. Events carry no wallet
+  addresses, amounts, descriptions or other identifiers:
+  `invoice_created`, `invoice_paid`, `faucet_requested`,
+  `trustline_enabled`.
 
 ## Known limitations (documented, intentional for testnet)
 
@@ -134,11 +143,24 @@ Next.js 15 App Router, React 19, TypeScript, Tailwind. Key modules:
   queries). `max` (250) bounds the scan so a large ledger cannot hang the UI.
 - **Faucet is a rate-limited test-token mint.** `/api/faucet` now serves
   only deployments whose network passphrase is the SDF testnet passphrase
-  (returns 503 otherwise), and rate-limits each wallet to one mint per hour
-  (429 with the wait surfaced in the UI). It remains best-effort: the counter
-  is per warm serverless instance, not a global budget. Untouched premise: the
-  route mints a demo testnet asset and any deployment involving a real asset
-  must still remove or replace it.
+  (returns 503 otherwise). Rate limiting can be configured:
+  - **In-memory (default):** per-instance, best-effort. No env vars required.
+  - **Global (Upstash Redis or Vercel KV):** set `UPSTASH_REDIS_REST_URL` +
+    `UPSTASH_REDIS_REST_TOKEN` or `KV_REST_API_URL` + `KV_REST_API_TOKEN`.
+    Limits are then enforced across all serverless instances.
+
+  Configurable limits:
+  - Per-IP limit: `RATE_LIMITER_IP_LIMIT_PER_HOUR` (default: 5 mints/IP/hour).
+  - Global daily cap: `RATE_LIMITER_GLOBAL_DAILY_CAP` (default: 100,000,000,000
+    tokens = 10,000 USDC @ 7 decimals).
+
+  Multiple wallets from one IP share the per-IP limit; one wallet can bypass
+  per-IP limits by using different IPs. The rate limiter interface (`RateLimiter`
+  in `web/lib/rate-limiter.ts`) can be extended with other backends (e.g.,
+  DynamoDB, PostgreSQL) as needed. Untouched premise: the route mints a demo
+  testnet asset and any deployment involving a real asset must still remove or
+  replace it.
+
 - **Read simulation source.** `web/lib/contract.ts` builds read simulations
   over a fixed, well-known funded testnet account (`READ_SOURCE`). It is only
   a simulation source: it never signs or funds anything, and reads are never
@@ -150,7 +172,7 @@ Next.js 15 App Router, React 19, TypeScript, Tailwind. Key modules:
   used exclusively by `/api/faucet`. It is never exposed to the client (see the
   faucet limitation above).
 - All contract writes require the acting party's `require_auth()`, enforced by
-  the contract and now *verified by tests* (the `MockAuth` tests in
+  the contract and now _verified by tests_ (the `MockAuth` tests in
   `contracts/invoice/src/test.rs` confirm create requires freelancer auth and
   fund requires client auth, with an impostor's auth rejected).
 - The UI displays invoice descriptions exactly as recorded on-chain; it does

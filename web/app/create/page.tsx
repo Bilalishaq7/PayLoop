@@ -1,13 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
+import { ConnectPrompt } from "@/components/ConnectPrompt";
 import { Alert, Spinner, TxLink } from "@/components/ui";
 import { InvoicePreview } from "@/components/InvoiceDocument";
-import { createInvoice } from "@/lib/contract";
+import { createInvoice, getAllowedTokenIds } from "@/lib/contract";
+import { errorMessage } from "@/lib/async-resource";
+import { dueDateError, todayDateInputValue } from "@/lib/invoice-helpers";
 import { toBaseUnits } from "@/lib/format";
-import { config, isConfigured } from "@/lib/config";
+import { config, getTokenConfig, isConfigured, tokens } from "@/lib/config";
+import { useTokenMeta } from "@/lib/use-token-meta";
+import { trackEvent } from "@/lib/analytics";
 import {
   BUILTIN_TEMPLATES,
   deleteCustomTemplate,
@@ -19,21 +24,43 @@ import {
 type Result = { id: string; hash: string };
 
 export default function CreatePage() {
-  const { address, connect, connecting } = useWallet();
+  const { address } = useWallet();
   const [client, setClient] = useState("");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
+  // Set after mount so the server-rendered markup and the first client render
+  // match (the server's "today" can differ from the user's local date).
+  const [today, setToday] = useState("");
+  useEffect(() => setToday(todayDateInputValue()), []);
   const [submitting, setSubmitting] = useState(false);
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
-  const [customTemplates, setCustomTemplates] = useState<InvoiceTemplate[]>(() =>
-    loadCustomTemplates()
+  const [customTemplates, setCustomTemplates] = useState<InvoiceTemplate[]>(
+    () => loadCustomTemplates(),
   );
   const [templateName, setTemplateName] = useState("");
+  const [tokenId, setTokenId] = useState(config.tokenId);
+  const [availableTokens, setAvailableTokens] = useState(() => tokens);
+  const token = useTokenMeta(tokenId);
 
   const configured = isConfigured();
+
+  useEffect(() => {
+    let active = true;
+    getAllowedTokenIds()
+      .then((ids) => {
+        if (!active) return;
+        const merged = ids.map((id) => getTokenConfig(id));
+        setAvailableTokens(merged);
+        if (ids.length > 0 && !ids.includes(tokenId)) setTokenId(ids[0]);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [tokenId]);
 
   function validate(): string | null {
     if (!client.startsWith("G") || client.length !== 56) {
@@ -49,12 +76,15 @@ export default function CreatePage() {
     if (!description.trim()) {
       return "Add a short description of the work.";
     }
+    // Issue #66: an empty due date is fine; a date before today is not.
+    const dueErr = dueDateError(dueDate);
+    if (dueErr) return dueErr;
     return null;
   }
 
   function applyTemplate(id: string) {
     const template = [...BUILTIN_TEMPLATES, ...customTemplates].find(
-      (t) => t.id === id
+      (t) => t.id === id,
     );
     if (!template) return;
     setDescription(template.description);
@@ -80,8 +110,8 @@ export default function CreatePage() {
             id: "—",
             freelancer: address ?? "",
             client,
-            token: config.tokenId,
-            amount: toBaseUnits(amount),
+            token: tokenId,
+            amount: toBaseUnits(amount, token.decimals),
             description: description.trim(),
             dueDate: dueDate
               ? BigInt(Math.floor(new Date(dueDate).getTime() / 1000))
@@ -91,7 +121,7 @@ export default function CreatePage() {
             paidAt: 0n,
           }
         : null,
-    [client, amount, description, dueDate, address]
+    [client, amount, description, dueDate, address, tokenId, token.decimals],
   );
 
   function openPreview() {
@@ -128,17 +158,19 @@ export default function CreatePage() {
       const res = await createInvoice({
         freelancer: address,
         client,
-        amount: toBaseUnits(amount),
+        amount: toBaseUnits(amount, token.decimals),
         description: description.trim(),
         dueDate: dueUnix,
+        token: tokenId,
       });
       setResult(res);
+      trackEvent("invoice_created");
       setClient("");
       setAmount("");
       setDescription("");
       setDueDate("");
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to create invoice.");
+    } catch (e) {
+      setError(errorMessage(e, "Failed to create invoice."));
     } finally {
       setSubmitting(false);
     }
@@ -160,7 +192,7 @@ export default function CreatePage() {
         <h1 className="text-2xl font-bold">New invoice</h1>
         <p className="mt-1 text-sm text-slate-400">
           You are the freelancer. The invoice is recorded on-chain and your
-          client funds it in {config.tokenSymbol}.
+          client funds it in the token you choose below.
         </p>
       </div>
 
@@ -185,18 +217,7 @@ export default function CreatePage() {
       {error && <Alert kind="error">{error}</Alert>}
 
       {!address ? (
-        <div className="card flex flex-col items-center gap-4 py-10 text-center">
-          <p className="text-slate-300">
-            Connect your wallet to create an invoice.
-          </p>
-          <button
-            onClick={connect}
-            disabled={connecting}
-            className="btn-primary"
-          >
-            {connecting ? "Connecting…" : "Connect wallet"}
-          </button>
-        </div>
+        <ConnectPrompt message="Connect your wallet to create an invoice." />
       ) : (
         <form
           onSubmit={(e) => {
@@ -214,7 +235,9 @@ export default function CreatePage() {
                 id="template"
                 className="input flex-1"
                 value=""
-                onChange={(e) => e.target.value && applyTemplate(e.target.value)}
+                onChange={(e) =>
+                  e.target.value && applyTemplate(e.target.value)
+                }
               >
                 <option value="">Choose a template…</option>
                 <optgroup label="Built-in">
@@ -255,7 +278,10 @@ export default function CreatePage() {
             {customTemplates.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {customTemplates.map((t) => (
-                  <span key={t.id} className="badge bg-brand-500/15 text-brand-200">
+                  <span
+                    key={t.id}
+                    className="badge bg-brand-500/15 text-brand-200"
+                  >
                     {t.name}
                     <button
                       type="button"
@@ -272,8 +298,8 @@ export default function CreatePage() {
               </div>
             )}
             <p className="mt-1.5 text-xs text-slate-500">
-              Templates prefill the description and amount. Your saved
-              templates stay in this browser.
+              Templates prefill the description and amount. Your saved templates
+              stay in this browser.
             </p>
           </div>
 
@@ -291,9 +317,33 @@ export default function CreatePage() {
             />
           </div>
 
+          {availableTokens.length > 1 && (
+            <div>
+              <label className="label" htmlFor="token">
+                Payment token
+              </label>
+              <select
+                id="token"
+                className="input"
+                value={tokenId}
+                onChange={(e) => setTokenId(e.target.value)}
+              >
+                {availableTokens.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {getTokenConfig(t.id).symbol}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Only tokens allowed by the contract can be selected. This choice
+                is fixed once the invoice is created.
+              </p>
+            </div>
+          )}
+
           <div>
             <label className="label" htmlFor="amount">
-              Amount ({config.tokenSymbol})
+              Amount ({token.symbol})
             </label>
             <input
               id="amount"
@@ -327,9 +377,21 @@ export default function CreatePage() {
               id="due"
               type="date"
               className="input"
+              min={today || undefined}
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
+              aria-invalid={dueDateError(dueDate) ? true : undefined}
+              aria-describedby={dueDateError(dueDate) ? "due-error" : undefined}
             />
+            {dueDateError(dueDate) && (
+              <p
+                id="due-error"
+                role="alert"
+                className="mt-1 text-xs text-red-300"
+              >
+                {dueDateError(dueDate)}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row">

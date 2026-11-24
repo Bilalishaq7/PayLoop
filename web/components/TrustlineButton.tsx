@@ -3,15 +3,25 @@
 import { useCallback, useEffect, useState } from "react";
 import { useWallet } from "./WalletProvider";
 import { Alert, Spinner } from "./ui";
-import { establishUsdcTrustline, hasUsdcTrustline } from "@/lib/contract";
+import { establishTokenTrustline, hasTokenTrustline } from "@/lib/contract";
 import { config } from "@/lib/config";
+import { useTokenMeta } from "@/lib/use-token-meta";
+import { trackEvent } from "@/lib/analytics";
+import { errorMessage } from "@/lib/async-resource";
 
 // Detects whether the connected wallet trusts the USDC asset and, if not,
 // offers a one-click button to establish the trustline via Freighter. This
 // removes the biggest onboarding footgun: without a trustline the faucet mint
 // and invoice payment both fail with a cryptic "trustline missing" error.
-export function TrustlineButton({ onDone }: { onDone?: () => void }) {
+export function TrustlineButton({
+  onDone,
+  tokenId = config.tokenId,
+}: {
+  onDone?: () => void;
+  tokenId?: string;
+}) {
   const { address } = useWallet();
+  const token = useTokenMeta(tokenId);
   const [trusted, setTrusted] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -19,11 +29,11 @@ export function TrustlineButton({ onDone }: { onDone?: () => void }) {
   const check = useCallback(async () => {
     if (!address) return;
     try {
-      setTrusted(await hasUsdcTrustline(address));
+      setTrusted(await hasTokenTrustline(address, tokenId));
     } catch {
       setTrusted(null);
     }
-  }, [address]);
+  }, [address, tokenId]);
 
   useEffect(() => {
     setTrusted(null);
@@ -35,11 +45,12 @@ export function TrustlineButton({ onDone }: { onDone?: () => void }) {
     setLoading(true);
     setError(null);
     try {
-      await establishUsdcTrustline(address);
+      await establishTokenTrustline(address, tokenId);
       setTrusted(true);
+      trackEvent("trustline_enabled");
       onDone?.();
-    } catch (e: any) {
-      setError(e?.message ?? "Could not enable USDC.");
+    } catch (e) {
+      setError(errorMessage(e, `Could not enable ${token.symbol}.`));
     } finally {
       setLoading(false);
     }
@@ -51,8 +62,8 @@ export function TrustlineButton({ onDone }: { onDone?: () => void }) {
   return (
     <div className="space-y-2">
       <Alert kind="info">
-        This wallet needs to enable {config.tokenSymbol} before it can receive
-        or pay. This is a one-time, no-cost step.
+        This wallet needs to enable {token.symbol} before it can receive or pay.
+        This is a one-time, no-cost step.
       </Alert>
       {error && <Alert kind="error">{error}</Alert>}
       <button
@@ -62,10 +73,10 @@ export function TrustlineButton({ onDone }: { onDone?: () => void }) {
       >
         {loading ? (
           <>
-            <Spinner /> Enabling {config.tokenSymbol}…
+            <Spinner /> Enabling {token.symbol}…
           </>
         ) : (
-          `Enable ${config.tokenSymbol}`
+          `Enable ${token.symbol}`
         )}
       </button>
     </div>

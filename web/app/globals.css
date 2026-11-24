@@ -2,9 +2,62 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Design tokens. Colours are defined once here and used through the semantic
+   names in tailwind.config.ts (bg-surface, text-fg, border-line, ...) or
+   directly by the component classes below. Dark is the default; the .light
+   class on <html> swaps the values, so components need no per-theme rules.
+   Channel tokens hold "R G B" so Tailwind can apply opacity to them. */
 :root {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
+
+  /* Surfaces and text */
+  --page: 11 18 32;
+  --surface: 19 28 46;
+  --fg: 241 245 249;
+  --fg-muted: 203 213 225;
+  --fg-subtle: 148 163 184;
+  --line: 255 255 255;
+
+  /* Component colours, as full values because they carry their own alpha */
+  --card-bg: rgb(19 28 46 / 0.8);
+  --card-border: rgb(255 255 255 / 0.1);
+  --card-fg: rgb(241 245 249);
+  --card-shadow: rgb(0 0 0 / 0.2);
+  --ghost-bg: rgb(255 255 255 / 0.05);
+  --ghost-bg-hover: rgb(255 255 255 / 0.1);
+  --ghost-border: rgb(255 255 255 / 0.1);
+  --ghost-fg: rgb(241 245 249);
+  --ghost-fg-hover: rgb(241 245 249);
+  --input-bg: rgb(11 18 32 / 0.6);
+  --input-border: rgb(255 255 255 / 0.1);
+  --input-fg: rgb(241 245 249);
+  --input-placeholder: rgb(100 116 139);
+  --label-fg: rgb(203 213 225);
+}
+
+html.light {
+  --page: 241 245 249;
+  --surface: 255 255 255;
+  --fg: 15 23 42;
+  --fg-muted: 71 85 105;
+  --fg-subtle: 100 116 139;
+  --line: 226 232 240;
+
+  --card-bg: rgb(255 255 255);
+  --card-border: rgb(226 232 240);
+  --card-fg: rgb(15 23 42);
+  --card-shadow: rgb(203 213 225 / 0.4);
+  --ghost-bg: rgb(255 255 255);
+  --ghost-bg-hover: rgb(248 250 252);
+  --ghost-border: rgb(203 213 225);
+  --ghost-fg: rgb(51 65 85);
+  --ghost-fg-hover: rgb(15 23 42);
+  --input-bg: rgb(255 255 255);
+  --input-border: rgb(203 213 225);
+  --input-fg: rgb(15 23 42);
+  --input-placeholder: rgb(148 163 184);
+  --label-fg: rgb(51 65 85);
 }
 
 html {
@@ -12,7 +65,7 @@ html {
 }
 
 body {
-  @apply bg-ink-900 text-slate-100 antialiased;
+  @apply bg-page text-fg antialiased;
 }
 
 @layer components {
@@ -27,19 +80,37 @@ body {
       hover:bg-brand-400 hover:shadow-brand-400/40;
   }
   .btn-ghost {
-    @apply btn border border-white/10 bg-white/5 text-slate-100 hover:bg-white/10;
+    @apply btn border;
+    border-color: var(--ghost-border);
+    background-color: var(--ghost-bg);
+    color: var(--ghost-fg);
+  }
+  .btn-ghost:hover {
+    background-color: var(--ghost-bg-hover);
+    color: var(--ghost-fg-hover);
   }
   .card {
-    @apply rounded-2xl border border-white/10 bg-ink-800/80 p-6 shadow-xl
-      shadow-black/20 backdrop-blur;
+    @apply rounded-2xl border p-6 backdrop-blur;
+    border-color: var(--card-border);
+    background-color: var(--card-bg);
+    color: var(--card-fg);
+    box-shadow:
+      0 20px 25px -5px var(--card-shadow),
+      0 8px 10px -6px var(--card-shadow);
   }
   .label {
-    @apply mb-1.5 block text-sm font-medium text-slate-300;
+    @apply mb-1.5 block text-sm font-medium;
+    color: var(--label-fg);
   }
   .input {
-    @apply w-full rounded-lg border border-white/10 bg-ink-900/60 px-3.5 py-2.5
-      text-sm text-slate-100 placeholder:text-slate-500 focus:border-brand-400
-      focus:outline-none focus:ring-1 focus:ring-brand-400;
+    @apply w-full rounded-lg border px-3.5 py-2.5 text-sm
+      focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400;
+    border-color: var(--input-border);
+    background-color: var(--input-bg);
+    color: var(--input-fg);
+  }
+  .input::placeholder {
+    color: var(--input-placeholder);
   }
   .badge {
     @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs
@@ -47,25 +118,11 @@ body {
   }
 }
 
-/* Light theme — the app is dark-first; toggling .light on <html> re-tints the
-   core surfaces without rewriting every component. Dark remains the default. */
-html.light body {
-  @apply bg-slate-100 text-slate-900;
-}
-html.light .card {
-  @apply border-slate-200 bg-white text-slate-900 shadow-slate-300/40;
-}
-html.light .btn-ghost {
-  @apply border-slate-300 bg-white text-slate-700 hover:bg-slate-50
-    hover:text-slate-900;
-}
-html.light .input {
-  @apply border-slate-300 bg-white text-slate-900
-    placeholder:text-slate-400;
-}
-html.light .label {
-  @apply text-slate-700;
-}
+/* Legacy light-theme overrides for individual Tailwind utilities. The core
+   surfaces (body, .card, .btn-ghost, .input, .label) now use the tokens above.
+   These remain only for components that still use raw utility colours; delete
+   a rule here when the last component using that utility moves to a token
+   class (see docs/design-tokens.md). */
 html.light .bg-ink-900\/80,
 html.light .bg-ink-900\/95,
 html.light .bg-ink-900\/60 {

@@ -3,6 +3,7 @@
 // calls are simulated and never leave the browser as a real transaction.
 
 import {
+  Account,
   Address,
   Asset,
   BASE_FEE,
@@ -15,10 +16,19 @@ import {
   xdr,
   rpc,
 } from "@stellar/stellar-sdk";
-import { config } from "./config";
+import { config, getTokenConfig, tokens } from "./config";
+import { errorMessage } from "./async-resource";
 import { signXdr } from "./wallet";
+import {
+  createScanCache,
+  scanInvoices,
+  type InvoiceScanResult,
+  type ScanCache,
+} from "./invoice-scan";
 
 export type InvoiceStatus = "Pending" | "Paid";
+
+export type TokenMetadata = { symbol: string; decimals: number };
 
 export type Invoice = {
   id: string;
@@ -33,6 +43,27 @@ export type Invoice = {
   paidAt: bigint;
 };
 
+/** Values that scValToNative may return for the invoice struct's fields. */
+type RawScalar = string | number | bigint | { toString(): string };
+type RawStatus = number | string | { tag?: string };
+
+/** Contract decoding shape. Missing fields fall back to zero/empty values. */
+export type RawInvoice = {
+  id?: RawScalar;
+  freelancer?: RawScalar;
+  client?: RawScalar;
+  token?: RawScalar;
+  amount?: RawScalar;
+  description?: string;
+  due_date?: RawScalar;
+  status?: RawStatus;
+  created_at?: RawScalar;
+  paid_at?: RawScalar;
+};
+
+/** A failed simulation, distinct from transport errors that should propagate. */
+class ContractSimulationError extends Error {}
+
 function server(): rpc.Server {
   return new rpc.Server(config.rpcUrl, {
     allowHttp: config.rpcUrl.startsWith("http://"),
@@ -43,53 +74,61 @@ function contract(): Contract {
   return new Contract(config.contractId);
 }
 
+function toBigInt(value?: RawScalar): bigint {
+  return BigInt(value?.toString() ?? "0");
+}
+
 // Map the contract's raw return (an enum/struct via scValToNative) to Invoice.
-function decodeInvoice(raw: any): Invoice {
+function decodeInvoice(raw: RawInvoice): Invoice {
   // The contract's InvoiceStatus is a #[repr(u32)] enum (Pending = 0, Paid = 1),
   // so scValToNative gives us a plain number. Older/other encodings may surface
   // it as a { tag } object or a string, so handle all three.
   const rawStatus = raw.status;
+  const taggedStatus =
+    typeof rawStatus === "object" && rawStatus !== null
+      ? rawStatus.tag
+      : undefined;
   const isPaid =
-    rawStatus === 1 ||
-    rawStatus === "Paid" ||
-    rawStatus?.tag === "Paid";
+    rawStatus === 1 || rawStatus === "Paid" || taggedStatus === "Paid";
   const status: InvoiceStatus = isPaid ? "Paid" : "Pending";
   return {
     id: raw.id?.toString() ?? "0",
     freelancer: raw.freelancer?.toString?.() ?? String(raw.freelancer),
     client: raw.client?.toString?.() ?? String(raw.client),
     token: raw.token?.toString?.() ?? String(raw.token),
-    amount: BigInt(raw.amount ?? 0),
+    amount: toBigInt(raw.amount),
     description: raw.description ?? "",
-    dueDate: BigInt(raw.due_date ?? 0),
+    dueDate: toBigInt(raw.due_date),
     status,
-    createdAt: BigInt(raw.created_at ?? 0),
-    paidAt: BigInt(raw.paid_at ?? 0),
+    createdAt: toBigInt(raw.created_at),
+    paidAt: toBigInt(raw.paid_at),
   };
 }
 
 // --- Read-only calls (simulate only) --------------------------------------
 
-async function simulateRead(method: string, args: xdr.ScVal[]): Promise<any> {
+async function simulateContractRead(
+  contractId: string,
+  method: string,
+  args: xdr.ScVal[],
+): Promise<unknown> {
   const srv = server();
-  const account = await srv.getAccount(READ_SOURCE).catch(() => null);
+  const account = await srv.getAccount(config.readSource).catch(() => null);
   // Fall back to a throwaway account for pure reads if the read-source isn't
   // funded; simulation does not require a real signer.
-  const source =
-    account ??
-    new (await import("@stellar/stellar-sdk")).Account(READ_SOURCE, "0");
+  const source = account ?? new Account(config.readSource, "0");
 
-  const tx = new TransactionBuilder(source as any, {
+  const tx = new TransactionBuilder(source, {
     fee: BASE_FEE,
     networkPassphrase: config.networkPassphrase,
   })
-    .addOperation(contract().call(method, ...args))
+    .addOperation(new Contract(contractId).call(method, ...args))
     .setTimeout(30)
     .build();
 
   const sim = await srv.simulateTransaction(tx);
   if (rpc.Api.isSimulationError(sim)) {
-    throw new Error(sim.error);
+    throw new ContractSimulationError(sim.error);
   }
   if (!sim.result?.retval) {
     return null;
@@ -97,67 +136,124 @@ async function simulateRead(method: string, args: xdr.ScVal[]): Promise<any> {
   return scValToNative(sim.result.retval);
 }
 
-// A well-known funded testnet account used purely as a simulation source for
-// read calls (never signs anything). Falls back gracefully if unfunded.
-const READ_SOURCE =
-  "GBTDIHYJA4OPTDBDRKH5A5PHBSH7QVAEY46V27DCB24SXNRXIQNHSNUM";
+function simulateRead(method: string, args: xdr.ScVal[]): Promise<unknown> {
+  return simulateContractRead(config.contractId, method, args);
+}
+
+// Token symbol and decimals come from the token contract (SEP-41), not from
+// global config, so an invoice denominated in a 6-decimal token formats
+// correctly. Failed reads fall back to the configured values.
+const tokenMetadataCache = new Map<string, TokenMetadata>();
+
+export async function getTokenMetadata(
+  tokenId: string = config.tokenId,
+): Promise<TokenMetadata> {
+  const cached = tokenMetadataCache.get(tokenId);
+  if (cached) return cached;
+  const fallback = getTokenConfig(tokenId);
+  let meta: TokenMetadata = {
+    symbol: fallback.symbol,
+    decimals: fallback.decimals,
+  };
+  try {
+    const [symbol, decimals] = await Promise.all([
+      simulateContractRead(tokenId, "symbol", []),
+      simulateContractRead(tokenId, "decimals", []),
+    ]);
+    meta = {
+      symbol: symbol ? String(symbol) : meta.symbol,
+      decimals:
+        decimals === undefined || decimals === null
+          ? meta.decimals
+          : Number(decimals),
+    };
+    tokenMetadataCache.set(tokenId, meta);
+  } catch {
+    // Keep the config fallback; a token that can't be read still renders.
+  }
+  return meta;
+}
+
+// The contract's allowlist is authoritative; a v1 deployment without this
+// entrypoint simply falls back to the configured tokens.
+export async function getAllowedTokenIds(): Promise<string[]> {
+  try {
+    const raw = await simulateRead("get_allowed_tokens", []);
+    if (Array.isArray(raw) && raw.length > 0) {
+      return (raw as unknown[]).map((id) => String(id));
+    }
+  } catch {
+    // v1 contract: no allowlist entrypoint.
+  }
+  return tokens.map((t) => t.id);
+}
 
 export async function getInvoice(id: string): Promise<Invoice | null> {
   try {
     const raw = await simulateRead("get_invoice", [
       nativeToScVal(BigInt(id), { type: "u64" }),
     ]);
-    return raw ? decodeInvoice(raw) : null;
-  } catch (e: any) {
-    if (String(e?.message).includes("InvoiceNotFound")) return null;
+    return raw ? decodeInvoice(raw as RawInvoice) : null;
+  } catch (e) {
+    if (errorMessage(e, "").includes("InvoiceNotFound")) return null;
     throw e;
   }
 }
 
-export async function getInvoiceHistory(freelancer: string): Promise<Invoice[]> {
+export async function getInvoiceHistory(
+  freelancer: string,
+): Promise<Invoice[]> {
   const raw = await simulateRead("get_invoice_history", [
     new Address(freelancer).toScVal(),
   ]);
   if (!Array.isArray(raw)) return [];
-  return raw.map(decodeInvoice);
+  return (raw as RawInvoice[]).map(decodeInvoice);
 }
 
 // Walks invoice ids from 1 upward until the first gap / not-found, producing a
 // global feed of every invoice on the contract. This backs the public Activity
 // page (proof of wallet interactions) and does not depend on RPC event
 // retention. `max` bounds the scan so a large ledger can't hang the UI.
-export async function getAllInvoices(max = 250): Promise<Invoice[]> {
-  const out: Invoice[] = [];
-  for (let id = 1; id <= max; id++) {
-    let inv: Invoice | null;
-    try {
-      inv = await getInvoice(String(id));
-    } catch {
-      break;
-    }
-    if (!inv) break;
-    out.push(inv);
+//
+// The result reports RPC failures and a reached cap instead of hiding them,
+// and a short-lived cache keeps History and Activity from scanning twice.
+const SCAN_CACHE_TTL_MS = 30_000;
+const scanCaches = new Map<number, ScanCache<InvoiceScanResult<Invoice>>>();
+
+function scanCacheFor(max: number): ScanCache<InvoiceScanResult<Invoice>> {
+  let cache = scanCaches.get(max);
+  if (!cache) {
+    cache = createScanCache<InvoiceScanResult<Invoice>>(SCAN_CACHE_TTL_MS);
+    scanCaches.set(max, cache);
   }
-  return out;
+  return cache;
 }
 
-export async function getTokenBalance(address: string): Promise<bigint> {
-  const srv = server();
-  const token = new Contract(config.tokenId);
-  const source = new (await import("@stellar/stellar-sdk")).Account(
-    READ_SOURCE,
-    "0"
+export function getAllInvoices(max = 250): Promise<InvoiceScanResult<Invoice>> {
+  return scanCacheFor(max).get(() =>
+    scanInvoices((id) => getInvoice(String(id)), { max }),
   );
-  const tx = new TransactionBuilder(source, {
-    fee: BASE_FEE,
-    networkPassphrase: config.networkPassphrase,
-  })
-    .addOperation(token.call("balance", new Address(address).toScVal()))
-    .setTimeout(30)
-    .build();
-  const sim = await srv.simulateTransaction(tx);
-  if (rpc.Api.isSimulationError(sim) || !sim.result?.retval) return 0n;
-  return BigInt(scValToNative(sim.result.retval) ?? 0);
+}
+
+export function clearInvoiceScanCache(): void {
+  scanCaches.clear();
+}
+
+export async function getTokenBalance(
+  address: string,
+  tokenId: string = config.tokenId,
+): Promise<bigint> {
+  try {
+    const raw = await simulateContractRead(tokenId, "balance", [
+      new Address(address).toScVal(),
+    ]);
+    return BigInt((raw as RawScalar | null)?.toString() ?? "0");
+  } catch (e) {
+    // A simulation failure means the balance could not be read, which the UI
+    // treats as zero. Transport errors still surface to the caller.
+    if (e instanceof ContractSimulationError) return 0n;
+    throw e;
+  }
 }
 
 // --- Write calls (simulate -> prepare -> sign -> submit) ------------------
@@ -165,8 +261,8 @@ export async function getTokenBalance(address: string): Promise<bigint> {
 async function invokeSigned(
   sourceAddress: string,
   method: string,
-  args: xdr.ScVal[]
-): Promise<{ hash: string; returnValue: any }> {
+  args: xdr.ScVal[],
+): Promise<{ hash: string; returnValue: unknown }> {
   const srv = server();
   const account = await srv.getAccount(sourceAddress);
 
@@ -183,13 +279,13 @@ async function invokeSigned(
   const signedXdr = await signXdr(prepared.toXDR());
   const signedTx = TransactionBuilder.fromXDR(
     signedXdr,
-    config.networkPassphrase
+    config.networkPassphrase,
   );
 
   const sent = await srv.sendTransaction(signedTx);
   if (sent.status === "ERROR") {
     throw new Error(
-      `Transaction submission failed: ${JSON.stringify(sent.errorResult)}`
+      `Transaction submission failed: ${JSON.stringify(sent.errorResult)}`,
     );
   }
 
@@ -206,7 +302,7 @@ async function invokeSigned(
 
   if (getResult.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
     throw new Error(
-      `Transaction did not succeed (status: ${getResult.status}).`
+      `Transaction did not succeed (status: ${getResult.status}).`,
     );
   }
 
@@ -222,24 +318,34 @@ export async function createInvoice(params: {
   amount: bigint;
   description: string;
   dueDate: bigint;
+  token?: string;
 }): Promise<{ id: string; hash: string }> {
+  const tokenId =
+    params.token && params.token !== config.tokenId ? params.token : null;
   const { hash, returnValue } = await invokeSigned(
     params.freelancer,
-    "create_invoice",
+    tokenId ? "create_invoice_with_token" : "create_invoice",
     [
       new Address(params.freelancer).toScVal(),
       new Address(params.client).toScVal(),
       nativeToScVal(params.amount, { type: "i128" }),
       nativeToScVal(params.description, { type: "string" }),
       nativeToScVal(params.dueDate, { type: "u64" }),
-    ]
+      ...(tokenId ? [new Address(tokenId).toScVal()] : []),
+    ],
   );
-  return { id: returnValue?.toString() ?? "0", hash };
+  return {
+    id:
+      returnValue === null || returnValue === undefined
+        ? "0"
+        : String(returnValue),
+    hash,
+  };
 }
 
 export async function fundInvoice(
   clientAddress: string,
-  invoiceId: string
+  invoiceId: string,
 ): Promise<{ hash: string }> {
   const { hash } = await invokeSigned(clientAddress, "fund_invoice", [
     nativeToScVal(BigInt(invoiceId), { type: "u64" }),
@@ -247,10 +353,10 @@ export async function fundInvoice(
   return { hash };
 }
 
-// --- Trustline (classic asset behind the USDC SAC) ------------------------
+// --- Trustline (classic asset behind each SAC) ----------------------------
 
-function usdcAsset(): Asset {
-  return new Asset(config.tokenSymbol, config.tokenIssuer);
+function tokenAsset(tokenId: string, symbol: string): Asset {
+  return new Asset(symbol, getTokenConfig(tokenId).issuer);
 }
 
 function horizon(): Horizon.Server {
@@ -259,16 +365,23 @@ function horizon(): Horizon.Server {
   });
 }
 
-// True if `address` already trusts the USDC asset (can hold/send it). The
-// issuer itself implicitly "has" the asset and never needs a trustline.
-export async function hasUsdcTrustline(address: string): Promise<boolean> {
-  if (address === config.tokenIssuer) return true;
+// True if `address` already trusts the asset behind `tokenId` (can hold/send
+// it). The issuer itself implicitly "has" the asset and needs no trustline.
+export async function hasTokenTrustline(
+  address: string,
+  tokenId: string = config.tokenId,
+): Promise<boolean> {
+  const issuer = getTokenConfig(tokenId).issuer;
+  if (address === issuer) return true;
+  const { symbol } = await getTokenMetadata(tokenId);
   try {
     const account = await horizon().loadAccount(address);
     return account.balances.some(
-      (b: any) =>
-        b.asset_code === config.tokenSymbol &&
-        b.asset_issuer === config.tokenIssuer
+      (b) =>
+        "asset_code" in b &&
+        b.asset_code === symbol &&
+        "asset_issuer" in b &&
+        b.asset_issuer === issuer,
     );
   } catch {
     // Account not found / network error: treat as no trustline so the UI
@@ -277,27 +390,39 @@ export async function hasUsdcTrustline(address: string): Promise<boolean> {
   }
 }
 
-// Builds a changeTrust op for the USDC asset, signs it via Freighter, and
-// submits through Horizon. Lets a wallet receive/hold USDC without hunting
-// for the asset in Freighter's UI.
-export async function establishUsdcTrustline(
-  address: string
+// Builds a changeTrust op for the asset behind `tokenId`, signs it via
+// Freighter, and submits through Horizon.
+export async function establishTokenTrustline(
+  address: string,
+  tokenId: string = config.tokenId,
 ): Promise<{ hash: string }> {
+  const { symbol } = await getTokenMetadata(tokenId);
   const h = horizon();
   const account = await h.loadAccount(address);
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: config.networkPassphrase,
   })
-    .addOperation(Operation.changeTrust({ asset: usdcAsset() }))
+    .addOperation(Operation.changeTrust({ asset: tokenAsset(tokenId, symbol) }))
     .setTimeout(120)
     .build();
 
   const signedXdr = await signXdr(tx.toXDR());
   const signedTx = TransactionBuilder.fromXDR(
     signedXdr,
-    config.networkPassphrase
+    config.networkPassphrase,
   );
-  const res = await h.submitTransaction(signedTx as any);
+  const res = await h.submitTransaction(signedTx);
   return { hash: res.hash };
+}
+
+// Default-token compatibility wrappers used by the faucet/onboarding flows.
+export function hasUsdcTrustline(address: string): Promise<boolean> {
+  return hasTokenTrustline(address, config.tokenId);
+}
+
+export function establishUsdcTrustline(
+  address: string,
+): Promise<{ hash: string }> {
+  return establishTokenTrustline(address, config.tokenId);
 }

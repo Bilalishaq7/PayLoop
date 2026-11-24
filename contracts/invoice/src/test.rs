@@ -1,5 +1,55 @@
 #![cfg(test)]
 
+//! # PayLoop Invoice Contract Test Suite
+//!
+//! This module contains comprehensive test coverage for the PayLoop invoice and escrow contract.
+//! Tests are organized into three main categories:
+//!
+//! ## 1. Core Functionality Tests (using `mock_all_auths`)
+//!
+//! These tests verify the invoice lifecycle and business logic:
+//! - `create_then_fund_pays_freelancer`: Verifies the atomic create → pending → funded → paid flow with instant token release
+//! - `history_lists_freelancer_invoices_in_order`: Confirms invoices are stored and retrieved in creation order
+//! - `double_funding_is_rejected`: Ensures invoices cannot be funded twice (idempotence guard)
+//! - `funding_missing_invoice_errors`: Validates error handling for non-existent invoices
+//! - `rejects_non_positive_amount`: Enforces amount validation (must be > 0)
+//! - `cannot_initialize_twice`: Prevents contract reinitialization after setup
+//! - `timestamps_are_recorded`: Validates created_at and paid_at ledger timestamps
+//!
+//! ## 2. Authorization Tests (using `MockAuth` without `mock_all_auths`)
+//!
+//! These tests use `MockAuth` to explicitly verify which party must sign each operation.
+//! They ensure exactly the required authorization is enforced and no extra permissions leak:
+//! - `create_invoice_succeeds_with_freelancer_auth`: Only the freelancer can create an invoice
+//! - `create_invoice_fails_without_freelancer_auth`: Creation fails without the freelancer's signature
+//! - `create_invoice_rejects_impostor_auth`: An impostor cannot forge an invoice by signing with their key
+//! - `fund_invoice_succeeds_with_client_auth`: Only the named client can fund an invoice (includes nested token.transfer auth)
+//! - `fund_invoice_fails_without_client_auth`: Funding fails without the client's signature; invoice remains Pending
+//!
+//! ## 3. Edge Cases and Pagination Tests
+//!
+//! These tests cover boundary conditions and advanced query operations:
+//! - `create_invoice_ids_increment`: Verifies monotonic ID allocation (1, 2, 3, ...)
+//! - `rejects_self_directed_invoice`: Prevents an address from both creating and being the client
+//! - `rejects_empty_description`: Validates non-empty description requirement
+//! - `funding_whole_balance_succeeds_exactly`: Funds succeeds when client balance exactly matches invoice amount
+//! - `funding_short_balance_errors`: Prevents funding when balance is insufficient
+//! - `history_for_unknown_freelancer_is_empty`: Correctly returns empty list for new addresses
+//! - `invoice_count_returns_next_id`: Counter reflects the next invoice ID to be assigned
+//! - `get_invoice_range_respects_bounds`: Pagination with start offset and length bounds
+//! - `get_invoice_range_for_unknown_freelancer_is_empty`: Pagination gracefully handles unknown freelancers
+//! - `get_client_history_tracks_invoices_owed`: Tracks all invoices where an address is the client
+//! - `get_client_history_for_unknown_client_is_empty`: Client history empty for new addresses
+//!
+//! ## Authorization Pattern
+//!
+//! This suite demonstrates the Soroban authorization best-practice pattern:
+//! 1. **Convenience tests** use `mock_all_auths()` to quickly verify business logic
+//! 2. **Authorization tests** use `MockAuth` with `MockAuthInvoke` to prove exactly which party signed each call
+//! 3. Nested token transfers include `sub_invokes` to show the authorization chain
+//!
+//! This pattern is designed to be copied by other Soroban teams building multi-party contracts.
+
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -500,4 +550,211 @@ fn history_for_unknown_freelancer_is_empty() {
     let stranger = Address::generate(&s.env);
     let history = s.contract.get_invoice_history(&stranger);
     assert_eq!(history.len(), 0);
+}
+
+// --- Pagination and counter tests -------------------------------------------
+
+#[test]
+fn invoice_count_returns_next_id() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // After initialize, count is 1 (next id to be assigned).
+    let count = s.contract.invoice_count();
+    assert_eq!(count, 1);
+
+    invoice_with_id(&s, &freelancer, &client, 1_000_000);
+    let count = s.contract.invoice_count();
+    assert_eq!(count, 2);
+
+    invoice_with_id(&s, &freelancer, &client, 2_000_000);
+    let count = s.contract.invoice_count();
+    assert_eq!(count, 3);
+}
+
+#[test]
+fn get_invoice_range_respects_bounds() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // Create 5 invoices for the freelancer.
+    for i in 1..=5 {
+        invoice_with_id(&s, &freelancer, &client, 1_000_000i128 * i);
+    }
+
+    // Get first 2 invoices (start=0, len=2).
+    let range = s.contract.get_invoice_range(&freelancer, &0, &2);
+    assert_eq!(range.len(), 2);
+    assert_eq!(range.get(0).unwrap().id, 1);
+    assert_eq!(range.get(1).unwrap().id, 2);
+
+    // Get next 2 invoices (start=2, len=2).
+    let range = s.contract.get_invoice_range(&freelancer, &2, &2);
+    assert_eq!(range.len(), 2);
+    assert_eq!(range.get(0).unwrap().id, 3);
+    assert_eq!(range.get(1).unwrap().id, 4);
+
+    // Get from start=4, len=2 (only 1 invoice left).
+    let range = s.contract.get_invoice_range(&freelancer, &4, &2);
+    assert_eq!(range.len(), 1);
+    assert_eq!(range.get(0).unwrap().id, 5);
+
+    // Get from start beyond end (empty).
+    let range = s.contract.get_invoice_range(&freelancer, &5, &2);
+    assert_eq!(range.len(), 0);
+}
+
+#[test]
+fn get_invoice_range_for_unknown_freelancer_is_empty() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    let stranger = Address::generate(&s.env);
+
+    invoice_with_id(&s, &freelancer, &client, 1_000_000);
+
+    // Stranger has no invoices.
+    let range = s.contract.get_invoice_range(&stranger, &0, &10);
+    assert_eq!(range.len(), 0);
+}
+
+#[test]
+fn get_client_history_tracks_invoices_owed() {
+    let s = setup();
+    let freelancer1 = Address::generate(&s.env);
+    let freelancer2 = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // Client owes freelancer1 for 2 invoices.
+    invoice_with_id(&s, &freelancer1, &client, 1_000_000);
+    invoice_with_id(&s, &freelancer1, &client, 2_000_000);
+
+    // Client owes freelancer2 for 1 invoice.
+    invoice_with_id(&s, &freelancer2, &client, 3_000_000);
+
+    // Get client's history.
+    let history = s.contract.get_client_history(&client);
+    assert_eq!(history.len(), 3);
+    assert_eq!(history.get(0).unwrap().id, 1);
+    assert_eq!(history.get(1).unwrap().id, 2);
+    assert_eq!(history.get(2).unwrap().id, 3);
+}
+
+#[test]
+fn get_client_history_for_unknown_client_is_empty() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+    let stranger = Address::generate(&s.env);
+
+    invoice_with_id(&s, &freelancer, &client, 1_000_000);
+
+    // Stranger hasn't been charged for anything.
+    let history = s.contract.get_client_history(&stranger);
+    assert_eq!(history.len(), 0);
+}
+
+
+// --- Token Allowlist Tests --------------------------------------------------
+//
+// These tests verify multi-token support and the allowlist mechanism.
+
+#[test]
+fn create_invoice_with_allowed_token_succeeds() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // Create a second token and add it to the allowlist
+    let (token2, token2_admin) = create_token(&s.env, &s.admin);
+    s.contract.add_allowed_token(&s.admin, &token2);
+
+    // Verify token2 is in the allowlist
+    let allowed = s.contract.get_allowed_tokens();
+    assert_eq!(allowed.len(), 2); // default token + token2
+
+    // Mint on the second token
+    token2_admin.mint(&client, &5_000_000i128);
+
+    // Create an invoice using the second token
+    let id = s.contract.create_invoice_with_token(
+        &freelancer,
+        &client,
+        &5_000_000i128,
+        &String::from_str(&s.env, "job in token2"),
+        &0u64,
+        &token2,
+    );
+    assert_eq!(id, 1);
+
+    // Verify invoice stored the token
+    let inv = s.contract.get_invoice(&id);
+    assert_eq!(inv.token, token2);
+    assert_eq!(inv.amount, 5_000_000i128);
+
+    // Fund with token2
+    let token2_client = token::Client::new(&s.env, &token2);
+    assert_eq!(token2_client.balance(&client), 5_000_000i128);
+
+    s.contract.fund_invoice(&id);
+
+    // Verify funds transferred in token2
+    assert_eq!(token2_client.balance(&client), 0);
+    assert_eq!(token2_client.balance(&freelancer), 5_000_000i128);
+}
+
+#[test]
+fn create_invoice_with_disallowed_token_fails() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // Create a token but do NOT add it to the allowlist
+    let (token_disallowed, _) = create_token(&s.env, &s.admin);
+
+    // Attempt to create an invoice with the disallowed token
+    let res = s.contract.try_create_invoice_with_token(
+        &freelancer,
+        &client,
+        &1_000_000i128,
+        &String::from_str(&s.env, "job"),
+        &0u64,
+        &token_disallowed,
+    );
+
+    // Must fail with TokenNotAllowed error
+    assert_eq!(res, Err(Ok(Error::TokenNotAllowed)));
+}
+
+#[test]
+fn default_token_always_in_allowlist() {
+    let s = setup();
+
+    // After initialization, the default token should be in the allowlist
+    let allowed = s.contract.get_allowed_tokens();
+    assert_eq!(allowed.len(), 1);
+    assert_eq!(allowed.get(0).unwrap(), &s.token);
+}
+
+#[test]
+fn create_invoice_uses_default_token_when_not_specified() {
+    let s = setup();
+    let freelancer = Address::generate(&s.env);
+    let client = Address::generate(&s.env);
+
+    // Create invoice without specifying token (uses default)
+    s.token_admin.mint(&client, &1_000_000i128);
+    let id = s.contract.create_invoice(
+        &freelancer,
+        &client,
+        &1_000_000i128,
+        &String::from_str(&s.env, "job"),
+        &0u64,
+    );
+
+    // Verify invoice used the default token
+    let inv = s.contract.get_invoice(&id);
+    assert_eq!(inv.token, s.token);
 }
