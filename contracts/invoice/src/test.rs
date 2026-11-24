@@ -13,7 +13,8 @@
 //! - `double_funding_is_rejected`: Ensures invoices cannot be funded twice (idempotence guard)
 //! - `funding_missing_invoice_errors`: Validates error handling for non-existent invoices
 //! - `rejects_non_positive_amount`: Enforces amount validation (must be > 0)
-//! - `cannot_initialize_twice`: Prevents contract reinitialization after setup
+//! - `constructor_sets_the_same_state_initialize_did`: The constructor writes exactly the state the old `initialize` wrote
+//! - `attacker_cannot_hijack_a_deployment`: A second deployment with the attacker's admin and token is a separate instance; the deployer's instance keeps its own admin and token, and there is no `initialize` entrypoint left to call on it
 //! - `timestamps_are_recorded`: Validates created_at and paid_at ledger timestamps
 //!
 //! ## 2. Authorization Tests (using `MockAuth` without `mock_all_auths`)
@@ -87,9 +88,10 @@ fn setup<'a>() -> Setup<'a> {
     let admin = Address::generate(&env);
     let (token, token_admin) = create_token(&env, &admin);
 
-    let contract_id = env.register(InvoiceContract, ());
+    // Construction runs atomically with registration: the admin and token
+    // are set before any other call can reach the contract.
+    let contract_id = env.register(InvoiceContract, (admin.clone(), token.clone()));
     let contract = InvoiceContractClient::new(&env, &contract_id);
-    contract.initialize(&admin, &token);
 
     Setup {
         env,
@@ -203,10 +205,45 @@ fn rejects_non_positive_amount() {
 }
 
 #[test]
-fn cannot_initialize_twice() {
+fn constructor_sets_the_same_state_initialize_did() {
     let s = setup();
-    let res = s.contract.try_initialize(&s.admin, &s.token);
-    assert_eq!(res, Err(Ok(Error::AlreadyInitialized)));
+    // Exactly the state the old `initialize` wrote: admin, default token,
+    // allowlist seeded with the default token, next invoice id 1.
+    assert_eq!(s.contract.default_token_address(), s.token);
+    let allowed = s.contract.get_allowed_tokens();
+    assert_eq!(allowed.len(), 1);
+    assert_eq!(allowed.get(0).unwrap(), s.token);
+    assert_eq!(s.contract.invoice_count(), 1);
+}
+
+#[test]
+fn attacker_cannot_hijack_a_deployment() {
+    let s = setup();
+
+    // The old attack: deploy, then race the deployer to `initialize` the
+    // fresh instance with the attacker's own admin and token. With the
+    // constructor there is no separate initialize step to race — the state
+    // is set inside the deployment itself — and `initialize` no longer
+    // exists as an entrypoint, so there is nothing to call.
+    //
+    // The most an attacker can do is deploy their own separate instance.
+    // That gives them their own contract, never the deployer's.
+    let attacker = Address::generate(&s.env);
+    let (attacker_token, _) = create_token(&s.env, &attacker);
+    let attacker_id = s
+        .env
+        .register(InvoiceContract, (attacker.clone(), attacker_token.clone()));
+    let attacker_contract = InvoiceContractClient::new(&s.env, &attacker_id);
+
+    // The attacker's instance has the attacker's admin and token.
+    assert_eq!(attacker_contract.default_token_address(), attacker_token);
+    // The deployer's instance is untouched: still the deployer's token,
+    // still only that token in the allowlist, still the same next id.
+    assert_eq!(s.contract.default_token_address(), s.token);
+    let allowed = s.contract.get_allowed_tokens();
+    assert_eq!(allowed.len(), 1);
+    assert_eq!(allowed.get(0).unwrap(), s.token);
+    assert_eq!(s.contract.invoice_count(), 1);
 }
 
 #[test]
@@ -255,22 +292,12 @@ fn auth_setup() -> AuthEnv {
     let admin = Address::generate(&env);
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let token = sac.address();
-    let contract_address = env.register(InvoiceContract, ());
+    // Construction needs no auth: it runs inside the registration itself,
+    // before any other call can reach the contract.
+    let contract_address = env.register(InvoiceContract, (admin.clone(), token.clone()));
     let contract = InvoiceContractClient::new(&env, &contract_address);
     let freelancer = Address::generate(&env);
     let client = Address::generate(&env);
-
-    // initialize requires the admin's auth; grant exactly that invoke.
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_address,
-            fn_name: "initialize",
-            args: (admin.clone(), token.clone()).into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
-    contract.initialize(&admin, &token);
 
     AuthEnv {
         env,
@@ -756,7 +783,7 @@ fn invoice_count_returns_next_id() {
     let freelancer = Address::generate(&s.env);
     let client = Address::generate(&s.env);
 
-    // After initialize, count is 1 (next id to be assigned).
+    // After construction, count is 1 (next id to be assigned).
     let count = s.contract.invoice_count();
     assert_eq!(count, 1);
 
@@ -927,7 +954,7 @@ fn create_invoice_with_disallowed_token_fails() {
 fn default_token_always_in_allowlist() {
     let s = setup();
 
-    // After initialization, the default token should be in the allowlist
+    // After construction, the default token should be in the allowlist
     let allowed = s.contract.get_allowed_tokens();
     assert_eq!(allowed.len(), 1);
     assert_eq!(allowed.get(0).unwrap(), s.token);
@@ -984,22 +1011,20 @@ fn budget_regression_for_every_entrypoint() {
     let (token, token_admin) = create_token(&env, &admin);
     let (token2, _) = create_token(&env, &admin);
 
-    let contract_id = env.register(InvoiceContract, ());
-    let contract = InvoiceContractClient::new(&env, &contract_id);
-
-    // 1. initialize
-    let (_, init_b) = measure_budget(&env, || {
-        contract.initialize(&admin, &token);
+    // 1. constructor (runs atomically with registration)
+    let (contract_id, init_b) = measure_budget(&env, || {
+        env.register(InvoiceContract, (admin.clone(), token.clone()))
     });
-    std::println!("initialize: cpu={}, mem={}", init_b.cpu, init_b.mem);
+    let contract = InvoiceContractClient::new(&env, &contract_id);
+    std::println!("constructor: cpu={}, mem={}", init_b.cpu, init_b.mem);
     assert!(
         init_b.cpu < 200_000,
-        "initialize cpu {} exceeded threshold 200,000",
+        "constructor cpu {} exceeded threshold 200,000",
         init_b.cpu
     );
     assert!(
         init_b.mem < 60_000,
-        "initialize mem {} exceeded threshold 60,000",
+        "constructor mem {} exceeded threshold 60,000",
         init_b.mem
     );
 

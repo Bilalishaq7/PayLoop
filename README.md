@@ -101,7 +101,7 @@ Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Contract-level integr
 
 - **The contract is the only database.** Invoice state lives in two persistent
   storage keys per freelancer (`Invoice(id)` records and a per-freelancer
-  `History` index) plus three instance keys set once at `initialize` (admin,
+  `History` index) plus three instance keys set once by the constructor at deployment (admin,
   default token, id counter). There is no application backend holding state.
 - **Two-state lifecycle:** `Pending → Paid`, transitioned atomically inside
   `fund_invoice` together with the client→freelancer token transfer (instant
@@ -123,7 +123,7 @@ Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Contract-level integr
 Ecosystem relevance beyond the product itself:
 
 1. **A reusable, multi-token invoice/escrow contract.** A default payment token
-   is chosen at `initialize`, extra tokens can be allowlisted and chosen per
+   is chosen at deployment (constructor argument), extra tokens can be allowlisted and chosen per
    invoice, invoices store the token they were created with, and the
    instant-release escrow pattern is documented for reuse —
    [contracts/invoice/README.md](contracts/invoice/README.md) ships the

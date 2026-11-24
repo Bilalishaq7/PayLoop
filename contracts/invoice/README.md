@@ -42,9 +42,9 @@ no funds movement** — do not build against it.
 
 | Key | Storage kind | Set by | Purpose |
 | --- | --- | --- | --- |
-| `Admin` | instance | `initialize` | initializer address; only used to authorize growing the allowlist |
-| `DefaultToken` | instance | `initialize` | token contract used when `create_invoice` is called; immutable after init |
-| `AllowedTokens` | instance | `initialize`, `add_allowed_token` | tokens an invoice may be created with; entries are never removed |
+| `Admin` | instance | `__constructor` | initializer address; only used to authorize growing the allowlist |
+| `DefaultToken` | instance | `__constructor` | token contract used when `create_invoice` is called; immutable after construction |
+| `AllowedTokens` | instance | `__constructor`, `add_allowed_token` | tokens an invoice may be created with; entries are never removed |
 | `NextId` | instance | `create_invoice` | monotonically increasing invoice counter starting at 1 |
 | `Invoice(id)` | persistent | `create_invoice`, `fund_invoice` | the full `Invoice` record |
 | `History(freelancer)` | persistent | `create_invoice` | per-freelancer ordered list of invoice ids |
@@ -64,7 +64,7 @@ require a fresh deployment to use.
 
 | Function | Caller must authorize | Arguments | Returns | Emits |
 | --- | --- | --- | --- | --- |
-| `initialize` | `admin` | `admin`, `payment_token` | `()` | — |
+| `__constructor` | deployer (deployment transaction) | `admin`, `payment_token` | `()` | — |
 | `add_allowed_token` | `admin` | `admin`, `token` | `()` | — |
 | `create_invoice` | `freelancer` | `freelancer`, `client`, `amount` (i128), `description`, `due_date` (u64) | `u64` invoice id | `InvoiceCreated` |
 | `create_invoice_with_token` | `freelancer` | `freelancer`, `client`, `amount` (i128), `description`, `due_date` (u64), `token` | `u64` invoice id | `InvoiceCreated` |
@@ -107,8 +107,7 @@ Semantics worth knowing:
 
 | Code | Name | Raised when |
 | --- | --- | --- |
-| 1 | `NotInitialized` | read/init state missing — contract not initialized |
-| 2 | `AlreadyInitialized` | `initialize` called twice |
+| 1 | `NotInitialized` | state missing — contract not constructed |
 | 3 | `InvoiceNotFound` | unknown invoice id |
 | 4 | `AlreadyPaid` | funding an already-`Paid` invoice |
 | 5 | `InvalidAmount` | `amount <= 0` |
@@ -142,7 +141,7 @@ cargo build --target wasm32v1-none --release
 # -> ../target/wasm32v1-none/release/payloop_invoice.wasm
 ```
 
-Full deploy walkthrough (keys, SAC, initialize, faucet): [../DEPLOYMENT.md](../DEPLOYMENT.md).
+Full deploy walkthrough (keys, SAC, deployment, faucet): [../DEPLOYMENT.md](../DEPLOYMENT.md).
 The contract CI (`.github/workflows/contract.yml`) runs all four steps above and
 uploads the release WASM as an artifact on every push touching `contracts/`.
 
@@ -218,7 +217,7 @@ stellar contract invoke --id CONTRACT_ID --source deployer --network testnet \
 ## Multi-token setup and v1 migration notes
 
 A fresh deployment sets the allowlist to the default token during
-`initialize`. To invoice in another stablecoin, the admin first calls
+construction (the deploy transaction). To invoice in another stablecoin, the admin first calls
 `add_allowed_token(admin, token)` once per token, then freelancers use
 `create_invoice_with_token`. The frontend reads `get_allowed_tokens` (falling
 back to `NEXT_PUBLIC_TOKENS` on v1 deployments) for its token selector, reads
@@ -231,11 +230,13 @@ fundable on the new deployment as long as their token is in the allowlist (the
 default token always is). Because there is no in-place upgrade, point clients
 at the new contract address and keep reading old invoices from the old
 contract, or replay their records off-chain; do not assume old ids exist in the
-new instance. Encoding of `Invoice` and of error codes 1–8 is unchanged.
+new instance. Encoding of `Invoice` is unchanged, and the remaining error
+codes keep their numbers (code 2, `AlreadyInitialized`, is gone with
+`initialize`).
 
 ## Reuse notes
 
-- **Token choice**: `initialize(admin, payment_token)` accepts any Soroban
+- **Token choice**: the constructor `__constructor(admin, payment_token)` accepts any Soroban
   token contract address (SAC or custom) as the default. Additional tokens are
   opt-in via `add_allowed_token`; every invoice stores the token it was created
   with and funding uses that token.
