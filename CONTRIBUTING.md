@@ -157,12 +157,12 @@ list is the short version of what is below.
 - `contracts/invoice/src/test.rs` must pass in full (27 tests; `MockAuth`-based
   authorization tests sit next to `mock_all_auths` convenience tests — new
   state-changing entrypoints should get both).
-- Do not weaken or delete existing tests to maile a change pass. If a test is
+- Do not weaken or delete existing tests to make a change pass. If a test is
   genuinely obsolete, explain why in the PR and update it purposefully.
 
 ## Where to start
 
-Good first issues are labeled `good first issue` . Another low-risk entry point
+Good first issues are labeled `good first issue`. Another low-risk entry point
 is improving docs or tests for the contract
-`((contracts/invoice/README.md` documents the lifecycle, auth matrix and error
+(`contracts/invoice/README.md` documents the lifecycle, auth matrix and error
 codes).
