@@ -6,6 +6,7 @@ import {
   invoicePrintTitle,
   isInvoiceOwner,
   isOverdue,
+  parseTokenBalance,
   todayDateInputValue,
 } from "../invoice-helpers.ts";
 
@@ -119,3 +120,14 @@ test("isOverdue defaults to the current clock", () => {
   assert.equal(isOverdue({ status: "Pending", dueDate: 99_999_999_999n }), false);
 });
 
+
+test("parseTokenBalance keeps a genuine zero and parses amounts", () => {
+  assert.equal(parseTokenBalance(0n), 0n);
+  assert.equal(parseTokenBalance("0"), 0n);
+  assert.equal(parseTokenBalance(12345678901234567890n), 12345678901234567890n);
+});
+
+test("parseTokenBalance throws instead of returning 0 for a missing value", () => {
+  assert.throws(() => parseTokenBalance(null));
+  assert.throws(() => parseTokenBalance(undefined));
+});
