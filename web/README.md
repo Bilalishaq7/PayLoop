@@ -80,6 +80,15 @@ Without a Redis/KV backend, rate limiting is in-memory and best-effort (resets o
 asset issuer. The issuer secret stays server-side. In production this route
 would be removed — it exists only so demo users can get testnet balances.
 
+Only `G...` account addresses are accepted; `C...` contract addresses are
+rejected with 400. Before minting, the route asks Horizon whether the wallet
+already trusts the configured test-USDC asset. A missing trustline returns 409
+with guidance to use **Enable USDC** on the dashboard; a Horizon outage returns
+502 rather than blaming the wallet. Send statuses are handled explicitly:
+`PENDING` is polled, `DUPLICATE` is checked for confirmation, `TRY_AGAIN_LATER`
+returns 503 with `Retry-After`, and all errors use fixed generic messages with
+no RPC details, XDR or secrets.
+
 ## The Naira off-ramp is mocked
 
 `/withdraw` simulates a licensed anchor (SEP-24) end to end: it validates the
@@ -105,6 +114,7 @@ To upgrade deliberately:
    ```
 
    (`current_protocol_version` is what the network runs now.)
+
 2. Read the SDK release notes for the target version and confirm it supports
    that protocol.
 3. Change the version in `package.json` to the exact new version, then refresh
