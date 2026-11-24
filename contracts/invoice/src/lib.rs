@@ -472,8 +472,16 @@ impl InvoiceContract {
         Self::allowed_tokens(&env)
     }
 
+    /// The contract interface version, as a semantic version symbol.
+    ///
+    /// Soroban Symbols only allow `[A-Za-z0-9_]`, so the dots of a semantic
+    /// version are written as underscores: this is 1.1.0. The old value
+    /// `"v1"` was the first release, so under this scheme it is 1.0.0. The
+    /// interface has since gained entrypoints and error codes without
+    /// breaking anything, so this is 1.1.0. The full policy (what each bump
+    /// means) lives in `contracts/invoice/README.md`.
     pub fn version(env: Env) -> Symbol {
-        Symbol::new(&env, "v1")
+        Symbol::new(&env, "1_1_0")
     }
 
     fn default_token(env: &Env) -> Result<Address, Error> {
