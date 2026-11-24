@@ -91,9 +91,9 @@ Semantics worth knowing:
   still be paid so late payments are not locked out.
 - Double funding is impossible: a second `fund_invoice` on a `Paid` invoice
   returns `AlreadyPaid`.
-- No allowlist for clients: any address can fund any `Pending` invoice by
-  passing its own auth. This is intentional — the invoice names who *should*
-  pay, but the chain doesn't need to restrict who *can*.
+- Only the client named on the invoice can fund it: `fund_invoice` requires
+  `invoice.client`'s auth and transfers from `invoice.client`'s balance, so a
+  third party cannot pay on the client's behalf.
 
 ## Error codes
 
