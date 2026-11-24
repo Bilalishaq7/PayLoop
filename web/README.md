@@ -72,6 +72,7 @@ Without a Redis/KV backend, rate limiting is in-memory and best-effort (resets o
 - `/withdraw` — mocked USDC→Naira off-ramp
 - `/activity` — public on-chain feed of every invoice + usage stats
 - `/api/faucet` — server route that mints test USDC (holds the issuer key)
+- `/api/health` — uptime probe for Soroban RPC and the invoice contract
 - `/api/feedback` — collects user feedback, forwards to an optional webhook
 
 ## The faucet
@@ -88,6 +89,29 @@ with guidance to use **Enable USDC** on the dashboard; a Horizon outage returns
 `PENDING` is polled, `DUPLICATE` is checked for confirmation, `TRY_AGAIN_LATER`
 returns 503 with `Retry-After`, and all errors use fixed generic messages with
 no RPC details, XDR or secrets.
+
+## Health check
+
+`GET /api/health` reports whether the latest Soroban ledger is available and
+whether the invoice contract's `version()` read can be simulated. It returns:
+
+```json
+{
+  "status": "healthy",
+  "checks": {
+    "ledger": { "ok": true, "sequence": 12345 },
+    "contract": { "ok": true, "version": "v1" }
+  }
+}
+```
+
+A failed check returns `503` with `"status": "degraded"`; both checks are always
+attempted. Responses use `Cache-Control: no-store`, contain no error text, and
+never read any server-only secret.
+
+```bash
+curl -i http://localhost:3000/api/health
+```
 
 ## The Naira off-ramp is mocked
 
