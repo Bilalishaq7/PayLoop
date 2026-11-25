@@ -105,3 +105,7 @@ Configured for Vercel. Set the env vars in the Vercel project settings, then:
 ```bash
 vercel --prod
 ```
+
+## Bundle analysis
+
+Run `npm run analyze` to generate bundle reports in `.next/analyze/`. Baseline route sizes and findings are in [docs/bundle-size.md](../docs/bundle-size.md).
