@@ -14,6 +14,8 @@ export function FeedbackWidget() {
   const [rating, setRating] = useState(0);
   const [message, setMessage] = useState("");
   const [role, setRole] = useState("");
+  // Honeypot: real users never see or fill this field. Bots often do.
+  const [website, setWebsite] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "done" | "error">(
     "idle",
   );
@@ -36,8 +38,16 @@ export function FeedbackWidget() {
           message: message.trim(),
           role,
           address,
+          website,
         }),
       });
+      if (res.status === 429) {
+        const retry = res.headers.get("Retry-After");
+        const wait = retry ? ` Try again in about ${retry} seconds.` : "";
+        throw new Error(
+          `You've sent a lot of feedback recently. Thanks for the enthusiasm!${wait}`,
+        );
+      }
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error ?? "Could not send feedback.");
@@ -55,6 +65,7 @@ export function FeedbackWidget() {
       setRating(0);
       setMessage("");
       setRole("");
+      setWebsite("");
       setState("idle");
       setErr(null);
     }, 200);
@@ -153,6 +164,29 @@ export function FeedbackWidget() {
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     maxLength={2000}
+                  />
+                </div>
+
+                {/* Honeypot: hidden from users and assistive tech. */}
+                <div
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    left: "-10000px",
+                    width: "1px",
+                    height: "1px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <label htmlFor="fb-website">Website</label>
+                  <input
+                    id="fb-website"
+                    name="website"
+                    type="text"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    value={website}
+                    onChange={(e) => setWebsite(e.target.value)}
                   />
                 </div>
 
