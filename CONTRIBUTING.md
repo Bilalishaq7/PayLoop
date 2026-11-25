@@ -3,6 +3,9 @@
 Thanks for your interest in improving PayLoop. This short guide covers how to
 report problems, propose changes, and get PRs merged.
 
+Please read our [Code of Conduct](CODE_OF_CONDUCT.md) — by participating in
+this project you agree to abide by its terms.
+
 ## Reporting bugs
 
 Open a GitHub issue. A good bug report includes:
