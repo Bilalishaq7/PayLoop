@@ -61,12 +61,18 @@ export default function RootLayout({
             </main>
             <footer className="border-t border-white/5 py-10 text-xs text-slate-500">
               <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 px-4 sm:flex-row">
-                <p>PayLoop · Built on Stellar Soroban · Testnet demo</p>
+                <p>
+                  PayLoop · Built on Stellar Soroban
+                  {config.network !== "PUBLIC" && " · Testnet demo"}
+                </p>
                 <nav
                   aria-label="Footer links"
                   className="flex flex-wrap items-center justify-center gap-4 text-slate-400"
                 >
-                  <Link href="/activity" className="transition hover:text-white">
+                  <Link
+                    href="/activity"
+                    className="transition hover:text-white"
+                  >
                     Activity
                   </Link>
                   <Link href="/help" className="transition hover:text-white">
