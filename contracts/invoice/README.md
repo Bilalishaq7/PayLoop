@@ -48,13 +48,17 @@ no funds movement** — do not build against it.
 | `NextId` | instance | `create_invoice` | monotonically increasing invoice counter starting at 1 |
 | `Invoice(id)` | persistent | `create_invoice`, `fund_invoice` | the full `Invoice` record |
 | `History(freelancer)` | persistent | `create_invoice` | per-freelancer ordered list of invoice ids |
+| `ClientHistory(client)` | persistent | `create_invoice` | per-client ordered list of invoice ids |
 
 Known scaling limitation: `get_invoice_history` loads every invoice struct for
 one freelancer in a single call. Past a few hundred invoices per freelancer a
 deployed instance will hit Soroban read-footprint limits; a platform building
-on this contract should add a paginated accessor (e.g. `invoice_count(address)`
-+ `get_invoice_range(address, start, len)`) rather than reading everything at
-once.
+on this contract should use the paginated accessors `invoice_count(address)` +
+`get_invoice_range(address, start, len)` rather than reading everything at once.
+`get_client_history` is likewise unbounded per client and should be paged the
+same way. Note: `invoice_count`, `get_invoice_range` and `get_client_history`
+are **not yet on the deployed testnet contract**; they exist in source only and
+require a fresh deployment to use.
 
 ## Entrypoints
 
@@ -68,6 +72,9 @@ once.
 | `release_funds` | — (inert in v1) | `invoice_id` | `()` | — |
 | `get_invoice` | read-only | `invoice_id` | `Invoice` | — |
 | `get_invoice_history` | read-only | `freelancer` | `Vec<Invoice>` | — |
+| `invoice_count` | read-only | `freelancer` | `u32` | — |
+| `get_invoice_range` | read-only | `freelancer`, `start`, `len` | `Vec<Invoice>` | — |
+| `get_client_history` | read-only | `client` | `Vec<Invoice>` | — |
 | `default_token_address` | read-only | — | token `Address` | — |
 | `get_allowed_tokens` | read-only | — | `Vec<Address>` | — |
 | `version` | read-only | — | `"v1"` symbol | — |
@@ -127,7 +134,7 @@ participant's activity, instead of scanning invoices.
 
 ```bash
 cd contracts/invoice
-cargo test                              # 18 unit tests (auth + edge cases)
+cargo test                              # 23 unit tests (auth + edge cases)
 cargo fmt --all --check
 cargo clippy --all-targets
 cargo build --target wasm32v1-none --release
