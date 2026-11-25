@@ -62,6 +62,21 @@ npm run lint
 npm run build
 ```
 
+### Formatting
+
+The `web/` project is formatted with [Prettier](https://prettier.io) (config in
+`web/.prettierrc`, editor defaults in the root `.editorconfig`). Before opening
+a PR that touches `web/`, run:
+
+```bash
+cd web
+npm run format        # reformat changed files in place
+npm run format:check  # verify formatting without changing files
+```
+
+CI runs `format:check` on every PR. Formatting the existing `web/` tree is a
+separate one-time step, so do not reformat unrelated files in your PR.
+
 CI (`.github/workflows/`) runs the same checks on every PR; both must be green
 for review.
 
