@@ -247,10 +247,53 @@ new instance. Encoding of `Invoice` and of error codes 1–8 is unchanged.
   and add a `Refunded`/`Disputed` status on the enum. Renaming the enum's
   existing variants is a breaking change for stored data; additive variants
   are not.
-- **Deploying your copy after edits** — there is no in-place upgrade path (no
+- **Deploying your copy after edits** : there is no in-place upgrade path (no
   `set_admin`/upgrade function exists by design), so applying source changes
   means a fresh deploy with config re-pointed at the new addresses. Error
-  codes 1–5 are unchanged and 6–8 are appended, so clients compiled against
+  codes 1-5 are unchanged and 6-8 are appended, so clients compiled against
   the v1 ABI keep working; the new create/fund validations are behavior
   changes rather than ABI breaks and belong in release notes when a v2
   instance ships.
+
+## Resource budgets and thresholds
+
+Soroban transactions enforce hard protocol ceilings on CPU instruction count and memory allocations. To prevent regressions where changes silently inflate resource consumption, `contracts/invoice/src/test.rs` records and asserts budget ceilings for every contract entrypoint using Soroban SDK 27 cost-estimation test utilities (`env.cost_estimate().budget()`).
+
+### Observed entrypoint baselines and thresholds
+
+| Entrypoint | Observed CPU | CPU Threshold | Observed Memory | Memory Threshold |
+| :--- | :--- | :--- | :--- | :--- |
+| `initialize` | ~75k | 200,000 | ~29k | 60,000 |
+| `add_allowed_token` | ~96k | 200,000 | ~33k | 60,000 |
+| `create_invoice` | ~212k | 500,000 | ~94k | 200,000 |
+| `create_invoice_with_token` | ~238k | 500,000 | ~95k | 200,000 |
+| `fund_invoice` | ~427k | 1,500,000 | ~154k | 300,000 |
+| `release_funds` | ~80k | 300,000 | ~48k | 100,000 |
+| `get_invoice` | ~86k | 300,000 | ~49k | 100,000 |
+| `invoice_count` | ~52k | 200,000 | ~23k | 80,000 |
+| `get_invoice_range` | ~155k | 600,000 | ~88k | 200,000 |
+| `get_client_history` | ~155k | 600,000 | ~88k | 200,000 |
+| `default_token_address` | ~53k | 200,000 | ~23k | 80,000 |
+| `get_allowed_tokens` | ~54k | 200,000 | ~23k | 80,000 |
+| `version` | ~38k | 150,000 | ~21k | 60,000 |
+| `get_invoice_history` (2 items) | ~155k | 600,000 | ~87k | 200,000 |
+
+### Scaling behavior
+
+History reads scale linearly with the number of stored invoices:
+- 1 invoice: ~103k CPU, ~58k memory
+- 3 invoices: ~205k CPU, ~115k memory
+- 6 invoices: ~361k CPU, ~200k memory
+- 10 invoices: ~578k CPU, ~315k memory
+
+For large accounts exceeding several dozen invoices, consumers must use `get_invoice_range` for pagination rather than reading complete history collections in one call.
+
+### How to adjust thresholds
+
+Thresholds are defined directly in `contracts/invoice/src/test.rs` inside `budget_regression_for_every_entrypoint` and `test_history_reads_scale_with_invoice_count`.
+
+When updating contract logic or upgrading the Soroban SDK:
+1. Run `cargo test budget -- --nocapture` to inspect newly recorded CPU and memory costs printed to the console.
+2. If legitimate logic expansion increases resource usage, adjust the threshold constant in `test.rs` to maintain approximately 1.5x to 2x headroom above baseline while keeping safeguards against runaway complexity.
+3. Update the thresholds table above to document the new baselines.
+
