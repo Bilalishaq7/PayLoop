@@ -1,8 +1,17 @@
 import { withSentryConfig } from "@sentry/nextjs";
+import { buildSecurityHeaders } from "./lib/security-headers.mjs";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: buildSecurityHeaders(),
+      },
+    ];
+  },
 };
 
 // Sentry wraps the config only when a DSN/org is configured, so local dev and
