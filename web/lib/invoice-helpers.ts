@@ -96,3 +96,13 @@ export function isOverdue(
     invoice.dueDate * 1000n < BigInt(Math.floor(nowMs))
   );
 }
+
+
+const U64_MAX = 18446744073709551615n;
+
+// True when `id` is a canonical invoice id: digits only and at most u64::MAX
+// (issue #59). Anything else cannot exist on-chain, so callers should treat it
+// as "not found" without making an RPC call.
+export function isValidInvoiceId(id: string): boolean {
+  return /^\d+$/.test(id) && BigInt(id) <= U64_MAX;
+}

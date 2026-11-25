@@ -7,6 +7,7 @@ import {
   invoicePrintTitle,
   isInvoiceOwner,
   isOverdue,
+  isValidInvoiceId,
   todayDateInputValue,
 } from "../invoice-helpers.ts";
 
@@ -131,3 +132,15 @@ test("isOverdue defaults to the current clock", () => {
   assert.equal(isOverdue({ status: "Pending", dueDate: 99_999_999_999n }), false);
 });
 
+
+test("isValidInvoiceId accepts digit-only ids up to u64::MAX", () => {
+  assert.equal(isValidInvoiceId("1"), true);
+  assert.equal(isValidInvoiceId("0"), true);
+  assert.equal(isValidInvoiceId("18446744073709551615"), true);
+});
+
+test("isValidInvoiceId rejects non-numeric, negative, decimal and oversized ids", () => {
+  for (const id of ["", "abc", "1.5", "-1", "+1", " 1", "1e3", "0x10", "18446744073709551616", "99999999999999999999999"]) {
+    assert.equal(isValidInvoiceId(id), false, id);
+  }
+});
