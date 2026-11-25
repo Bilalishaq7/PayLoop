@@ -30,6 +30,9 @@ You will get an acknowledgement; fixes land as regular PRs (labelled
   double-payment rejection, balance pre-check) are defined in
   [contracts/invoice/README.md](contracts/invoice/README.md#entrypoints) and
   enforced in `contracts/invoice/src/lib.rs`.
-- Testnet-only shared-state caveats anyone can verify on-chain: anyone may
-  fund any pending invoice (by design), and the faucet mints freely (test
-  asset). Neither implies mainnet equivalence.
+- Only the client named on an invoice can fund it: `fund_invoice` requires
+  authorization from `invoice.client` and transfers from that address.
+  Third-party funding is not supported; any such change would be a separate
+  product decision.
+- Testnet-only shared-state caveats anyone can verify on-chain: the faucet
+  mints freely (test asset). This does not imply mainnet equivalence.

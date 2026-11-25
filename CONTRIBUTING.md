@@ -139,7 +139,7 @@ list is the short version of what is below.
 
 ## Test policy
 
-- `contracts/invoice/src/test.rs` must pass in full (27 tests; `MockAuth`-based
+- `contracts/invoice/src/test.rs` must pass in full (23 tests; `MockAuth`-based
   authorization tests sit next to `mock_all_auths` convenience tests — new
   state-changing entrypoints should get both).
 - Do not weaken or delete existing tests to make a change pass. If a test is
