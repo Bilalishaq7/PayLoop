@@ -5,6 +5,26 @@ import { useWallet } from "./WalletProvider";
 import { Spinner } from "./ui";
 import { errorMessage } from "@/lib/async-resource";
 
+// Message catalogue. Keys are read via t(); missing keys fall back to English.
+// Locale files live in web/messages/<locale>.json once next-intl is wired up.
+export const feedbackMessages = {
+  en: {
+    pickRatingOrNote: "Pick a rating or write a note.",
+    couldNotSend: "Could not send feedback.",
+    feedbackButton: "💬 Feedback",
+    sendFeedbackLabel: "Send feedback",
+    shareFeedbackTitle: "Share feedback",
+    thanks: "Thanks — that helps a lot.",
+    close: "Close",
+  },
+} as const;
+
+export type FeedbackMessageKey = keyof (typeof feedbackMessages)["en"];
+
+export function t(key: FeedbackMessageKey, locale: "en" = "en"): string {
+  return feedbackMessages[locale][key] ?? feedbackMessages.en[key];
+}
+
 // Floating feedback button + panel, mounted app-wide. Posts to /api/feedback.
 // Required for the "basic user feedback collection" submission item; kept
 // intentionally lightweight so onboarded users can leave a rating in seconds.
@@ -23,7 +43,7 @@ export function FeedbackWidget() {
     e.preventDefault();
     setErr(null);
     if (!rating && !message.trim()) {
-      setErr("Pick a rating or write a note.");
+      setErr(t("pickRatingOrNote"));
       return;
     }
     setState("sending");
@@ -40,11 +60,11 @@ export function FeedbackWidget() {
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        throw new Error(d.error ?? "Could not send feedback.");
+        throw new Error(d.error ?? t("couldNotSend"));
       }
       setState("done");
     } catch (e) {
-      setErr(errorMessage(e, "Could not send feedback."));
+      setErr(errorMessage(e, t("couldNotSend")));
       setState("error");
     }
   }
@@ -67,7 +87,7 @@ export function FeedbackWidget() {
         className="fixed bottom-4 right-4 z-40 rounded-full bg-brand-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-black/30 transition hover:bg-brand-400"
         aria-haspopup="dialog"
       >
-        💬 Feedback
+        {t("feedbackButton")}
       </button>
 
       {open && (
@@ -75,7 +95,7 @@ export function FeedbackWidget() {
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
           role="dialog"
           aria-modal="true"
-          aria-label="Send feedback"
+          aria-label={t("sendFeedbackLabel")}
           onClick={reset}
         >
           <div
@@ -83,11 +103,11 @@ export function FeedbackWidget() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold">Share feedback</h2>
+              <h2 className="text-lg font-bold">{t("shareFeedbackTitle")}</h2>
               <button
                 onClick={reset}
                 className="text-slate-400 hover:text-white"
-                aria-label="Close"
+                aria-label={t("close")}
               >
                 ✕
               </button>
@@ -98,9 +118,9 @@ export function FeedbackWidget() {
                 <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-emerald-500/15 text-2xl">
                   ✓
                 </div>
-                <p className="font-semibold">Thanks — that helps a lot.</p>
+                <p className="font-semibold">{t("thanks")}</p>
                 <button onClick={reset} className="btn-ghost w-full">
-                  Close
+                  {t("close")}
                 </button>
               </div>
             ) : (
@@ -168,7 +188,7 @@ export function FeedbackWidget() {
                       <Spinner /> Sending…
                     </>
                   ) : (
-                    "Send feedback"
+                    t("sendFeedbackLabel")
                   )}
                 </button>
               </form>
