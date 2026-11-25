@@ -47,6 +47,12 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit dependencies
+        run: cargo audit
+
       - name: No committed test snapshots
         run: |
           tracked="$(git ls-files | grep -E '(^|/)test_snapshots/' || true)"
