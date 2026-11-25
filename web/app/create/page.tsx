@@ -369,6 +369,14 @@ export default function CreatePage() {
                   placeholder="Save current as template"
                   value={templateName}
                   onChange={(e) => setTemplateName(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Enter here saves the template; it must not submit the
+                    // invoice form (which would open a signing request).
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      saveTemplate();
+                    }
+                  }}
                   maxLength={40}
                   aria-label="Template name"
                 />
