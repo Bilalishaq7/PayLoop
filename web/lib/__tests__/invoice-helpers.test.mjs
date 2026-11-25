@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildCreateInvoiceUrl,
   buildReminderMessage,
   dueDateError,
   invoicePrintTitle,
@@ -8,6 +9,17 @@ import {
   isOverdue,
   todayDateInputValue,
 } from "../invoice-helpers.ts";
+
+test("duplicate invoice URLs encode client, amount and description", () => {
+  assert.equal(
+    buildCreateInvoiceUrl({
+      client: "GCLIENT",
+      amount: "100.5",
+      description: "Design & build",
+    }),
+    "/create?client=GCLIENT&amount=100.5&description=Design+%26+build"
+  );
+});
 
 // ── #66 due date ────────────────────────────────────────────────────────────
 
