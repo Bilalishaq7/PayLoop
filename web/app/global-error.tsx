@@ -31,8 +31,8 @@ export default function GlobalError({
         <div style={{ textAlign: "center", padding: 16 }}>
           <h1>Something went wrong</h1>
           <p style={{ color: "#94a3b8", fontSize: 14 }}>
-            We hit an unexpected problem. Please try again, and if it keeps
-            happening, let us know.
+            We couldn't load this page. Please try again. If the problem keeps
+            happening, let us know and include the reference ID below.
           </p>
           {error.digest && (
             <p style={{ color: "#64748b", fontSize: 12 }}>
@@ -61,16 +61,10 @@ export default function GlobalError({
             >
               Try again
             </button>
-            <a
-              href="/"
-              style={{ color: "#3390fc", alignSelf: "center" }}
-            >
+            <a href="/" style={{ color: "#3390fc", alignSelf: "center" }}>
               Go home
             </a>
-            <a
-              href="/contact"
-              style={{ color: "#3390fc", alignSelf: "center" }}
-            >
+            <a href="/contact" style={{ color: "#3390fc", alignSelf: "center" }}>
               Report a problem
             </a>
           </div>

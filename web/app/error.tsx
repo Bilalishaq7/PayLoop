@@ -21,8 +21,8 @@ export default function Error({
       <div className="card space-y-4">
         <h1 className="text-xl font-bold">Something went wrong</h1>
         <p className="text-sm text-slate-400">
-          We hit an unexpected problem while loading this page. Please try
-          again, and if it keeps happening, let us know.
+          We couldn't load this page. Please try again. If the problem keeps
+          happening, let us know and include the reference ID below.
         </p>
         {error.digest && (
           <p className="text-xs text-slate-500">
