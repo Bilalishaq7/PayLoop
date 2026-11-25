@@ -18,6 +18,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { config, getTokenConfig, tokens } from "./config";
 import { errorMessage } from "./async-resource";
+import { parseTokenBalance } from "./invoice-helpers";
 import { isValidInvoiceId } from "./invoice-helpers";
 import { signXdr } from "./wallet";
 import {
@@ -247,17 +248,13 @@ export async function getTokenBalance(
   address: string,
   tokenId: string = config.tokenId,
 ): Promise<bigint> {
-  try {
-    const raw = await simulateContractRead(tokenId, "balance", [
-      new Address(address).toScVal(),
-    ]);
-    return BigInt((raw as RawScalar | null)?.toString() ?? "0");
-  } catch (e) {
-    // A simulation failure means the balance could not be read, which the UI
-    // treats as zero. Transport errors still surface to the caller.
-    if (e instanceof ContractSimulationError) return 0n;
-    throw e;
-  }
+  // Failures (simulation errors, RPC errors, a missing return value) must
+  // surface to the caller: returning 0n here made the UI show a false
+  // "0 USDC" and an insufficient-balance prompt. Callers show "—" on error.
+  const raw = await simulateContractRead(tokenId, "balance", [
+    new Address(address).toScVal(),
+  ]);
+  return parseTokenBalance(raw);
 }
 
 // --- Write calls (simulate -> prepare -> sign -> submit) ------------------

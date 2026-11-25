@@ -98,6 +98,13 @@ export function isOverdue(
 }
 
 
+// Converts a raw token `balance` read into a bigint. A missing value is an
+// error, not a zero balance (issue #60): only an explicit 0 means "0".
+export function parseTokenBalance(raw: unknown): bigint {
+  if (raw === null || raw === undefined) {
+    throw new Error("Could not read token balance.");
+  }
+  return BigInt(String(raw));
 const U64_MAX = 18446744073709551615n;
 
 // True when `id` is a canonical invoice id: digits only and at most u64::MAX
