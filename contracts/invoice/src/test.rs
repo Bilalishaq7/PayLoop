@@ -51,6 +51,10 @@
 //! This pattern is designed to be copied by other Soroban teams building multi-party contracts.
 
 use super::*;
+use proptest::{
+    collection,
+    test_runner::{Config, RngAlgorithm, TestRng, TestRunner},
+};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     token, Address, Env, String,
@@ -471,6 +475,198 @@ fn invoice_with_id(s: &Setup, freelancer: &Address, client: &Address, amount: i1
         &String::from_str(&s.env, "job"),
         &0u64,
     )
+}
+
+// Property tests use fixed ChaCha seeds so their generated cases are identical
+// locally and in CI. Eight cases per property keeps the host-backed Soroban
+// setup fast while varying the amounts, counts, and index assignments.
+const PROPERTY_CASES: u32 = 8;
+
+fn property_runner(seed: u8) -> TestRunner {
+    let config = Config {
+        cases: PROPERTY_CASES,
+        failure_persistence: None,
+        ..Config::default()
+    };
+    TestRunner::new_with_rng(
+        config,
+        TestRng::from_seed(RngAlgorithm::ChaCha, &[seed; 32]),
+    )
+}
+
+fn assert_ids_in_order(invoices: &soroban_sdk::Vec<Invoice>) {
+    for index in 0..invoices.len() {
+        assert_eq!(invoices.get(index).unwrap().id, u64::from(index) + 1);
+    }
+}
+
+#[test]
+fn property_invoice_ids_are_strictly_increasing() {
+    property_runner(1)
+        .run(&collection::vec(1i128..=1_000_000i128, 1..=8), |amounts| {
+            let s = setup();
+            let freelancer = Address::generate(&s.env);
+            let client = Address::generate(&s.env);
+            let mut previous_id = 0;
+
+            for amount in amounts {
+                let id = invoice_with_id(&s, &freelancer, &client, amount);
+                assert!(id > previous_id);
+                previous_id = id;
+            }
+
+            assert_eq!(s.contract.invoice_count(), previous_id + 1);
+            assert_ids_in_order(&s.contract.get_invoice_history(&freelancer));
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn property_paid_amount_equals_transferred_amount() {
+    property_runner(2)
+        .run(
+            &(1i128..=1_000_000i128, 0i128..=1_000_000i128),
+            |(amount, extra)| {
+                let s = setup();
+                let freelancer = Address::generate(&s.env);
+                let client = Address::generate(&s.env);
+                s.token_admin.mint(&client, &(amount + extra));
+                let id = invoice_with_id(&s, &freelancer, &client, amount);
+
+                s.contract.fund_invoice(&id);
+
+                let token_client = token::Client::new(&s.env, &s.token);
+                let invoice = s.contract.get_invoice(&id);
+                assert_eq!(invoice.status, InvoiceStatus::Paid);
+                assert_eq!(invoice.amount, amount);
+                assert_eq!(token_client.balance(&freelancer), amount);
+                assert_eq!(token_client.balance(&client), extra);
+                Ok(())
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn property_paid_invoice_cannot_be_paid_again() {
+    property_runner(3)
+        .run(
+            &(1i128..=1_000_000i128, 0i128..=1_000_000i128),
+            |(amount, extra)| {
+                let s = setup();
+                let freelancer = Address::generate(&s.env);
+                let client = Address::generate(&s.env);
+                s.token_admin.mint(&client, &(amount + extra));
+                let id = invoice_with_id(&s, &freelancer, &client, amount);
+                s.contract.fund_invoice(&id);
+
+                let token_client = token::Client::new(&s.env, &s.token);
+                let freelancer_balance = token_client.balance(&freelancer);
+                let client_balance = token_client.balance(&client);
+                assert_eq!(
+                    s.contract.try_fund_invoice(&id),
+                    Err(Ok(Error::AlreadyPaid))
+                );
+                assert_eq!(token_client.balance(&freelancer), freelancer_balance);
+                assert_eq!(token_client.balance(&client), client_balance);
+                assert_eq!(s.contract.get_invoice(&id).status, InvoiceStatus::Paid);
+                Ok(())
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn property_freelancer_history_is_consistent() {
+    property_runner(4)
+        .run(
+            &collection::vec((0u8..3, 0u8..3, 1i128..=1_000_000i128), 1..=8),
+            |entries| {
+                let s = setup();
+                let freelancers = [
+                    Address::generate(&s.env),
+                    Address::generate(&s.env),
+                    Address::generate(&s.env),
+                ];
+                let clients = [
+                    Address::generate(&s.env),
+                    Address::generate(&s.env),
+                    Address::generate(&s.env),
+                ];
+                let mut expected_ids: [soroban_sdk::Vec<u64>; 3] =
+                    core::array::from_fn(|_| soroban_sdk::Vec::new(&s.env));
+
+                for (freelancer, client, amount) in entries {
+                    let id = invoice_with_id(
+                        &s,
+                        &freelancers[usize::from(freelancer)],
+                        &clients[usize::from(client)],
+                        amount,
+                    );
+                    expected_ids[usize::from(freelancer)].push_back(id);
+                }
+
+                for (index, freelancer) in freelancers.iter().enumerate() {
+                    let history = s.contract.get_invoice_history(freelancer);
+                    assert_eq!(history.len(), expected_ids[index].len());
+                    for (history_index, expected_id) in expected_ids[index].iter().enumerate() {
+                        assert_eq!(history.get(history_index as u32).unwrap().id, expected_id);
+                    }
+                    for invoice in history.iter() {
+                        assert_eq!(invoice.freelancer, *freelancer);
+                    }
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn property_client_history_is_consistent() {
+    property_runner(5)
+        .run(
+            &collection::vec((0u8..3, 0u8..3, 1i128..=1_000_000i128), 1..=8),
+            |entries| {
+                let s = setup();
+                let freelancers = [
+                    Address::generate(&s.env),
+                    Address::generate(&s.env),
+                    Address::generate(&s.env),
+                ];
+                let clients = [
+                    Address::generate(&s.env),
+                    Address::generate(&s.env),
+                    Address::generate(&s.env),
+                ];
+                let mut expected_ids: [soroban_sdk::Vec<u64>; 3] =
+                    core::array::from_fn(|_| soroban_sdk::Vec::new(&s.env));
+
+                for (freelancer, client, amount) in entries {
+                    let id = invoice_with_id(
+                        &s,
+                        &freelancers[usize::from(freelancer)],
+                        &clients[usize::from(client)],
+                        amount,
+                    );
+                    expected_ids[usize::from(client)].push_back(id);
+                }
+
+                for (index, client) in clients.iter().enumerate() {
+                    let history = s.contract.get_client_history(client);
+                    assert_eq!(history.len(), expected_ids[index].len());
+                    for (history_index, expected_id) in expected_ids[index].iter().enumerate() {
+                        assert_eq!(history.get(history_index as u32).unwrap().id, expected_id);
+                    }
+                    for invoice in history.iter() {
+                        assert_eq!(invoice.client, *client);
+                    }
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
 }
 
 #[test]
