@@ -3,12 +3,22 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
+import { ConnectPrompt } from "@/components/ConnectPrompt";
 import { Alert, Spinner, TxLink } from "@/components/ui";
 import { InvoicePreview } from "@/components/InvoiceDocument";
 import { createInvoice, getAllowedTokenIds } from "@/lib/contract";
+import { errorMessage } from "@/lib/async-resource";
+import { dueDateError, todayDateInputValue } from "@/lib/invoice-helpers";
 import { toBaseUnits } from "@/lib/format";
 import { config, getTokenConfig, isConfigured, tokens } from "@/lib/config";
 import { useTokenMeta } from "@/lib/use-token-meta";
+import { trackEvent } from "@/lib/analytics";
+import { StrKey } from "@stellar/stellar-sdk";
+import {
+  getSafeSessionStorageItem,
+  removeSafeSessionStorageItem,
+  setSafeSessionStorageItem,
+} from "@/lib/safe-storage";
 import {
   BUILTIN_TEMPLATES,
   deleteCustomTemplate,
@@ -16,33 +26,106 @@ import {
   saveCustomTemplate,
   type InvoiceTemplate,
 } from "@/lib/templates";
-import { dueDateError, todayDateInputValue } from "@/lib/invoice-helpers";
+import {
+  deleteSavedClient,
+  loadSavedClients,
+  renameSavedClient,
+  saveClient,
+  type SavedClient,
+} from "@/lib/clients";
 
 type Result = { id: string; hash: string };
+const DRAFT_STORAGE_KEY = "payloop.create.draft";
 
 export default function CreatePage() {
-  const { address, connect, connecting } = useWallet();
+  const { address } = useWallet();
   const [client, setClient] = useState("");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [tokenId, setTokenId] = useState(config.tokenId);
+  const [availableTokens, setAvailableTokens] = useState(() => tokens);
+  const [draftRestored, setDraftRestored] = useState(false);
   // Set after mount so the server-rendered markup and the first client render
   // match (the server's "today" can differ from the user's local date).
   const [today, setToday] = useState("");
   useEffect(() => setToday(todayDateInputValue()), []);
+  useEffect(() => {
+    const raw = getSafeSessionStorageItem(DRAFT_STORAGE_KEY);
+    if (raw) {
+      try {
+        const draft = JSON.parse(raw);
+        if (draft && typeof draft === "object") {
+          if (typeof draft.client === "string") setClient(draft.client);
+          if (typeof draft.amount === "string") setAmount(draft.amount);
+          if (typeof draft.description === "string") {
+            setDescription(draft.description);
+          }
+          if (typeof draft.dueDate === "string") setDueDate(draft.dueDate);
+          if (
+            typeof draft.tokenId === "string" &&
+            tokens.some((item) => item.id === draft.tokenId)
+          ) {
+            setTokenId(draft.tokenId);
+          }
+        }
+      } catch {
+        removeSafeSessionStorageItem(DRAFT_STORAGE_KEY);
+      }
+    }
+    setDraftRestored(true);
+  }, []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const clientParam = params.get("client");
+    const amountParam = params.get("amount");
+    const descriptionParam = params.get("description");
+
+    if (clientParam && StrKey.isValidEd25519PublicKey(clientParam)) {
+      setClient(clientParam);
+    }
+    const decimals = getTokenConfig(config.tokenId).decimals;
+    if (
+      amountParam &&
+      /^(?:\d+)(?:\.\d+)?$/.test(amountParam) &&
+      Number.isFinite(Number(amountParam)) &&
+      Number(amountParam) > 0 &&
+      (amountParam.split(".")[1]?.length ?? 0) <= decimals
+    ) {
+      setAmount(amountParam);
+    }
+    if (descriptionParam?.trim() && descriptionParam.length <= 120) {
+      setDescription(descriptionParam);
+    }
+  }, []);
+  useEffect(() => {
+    if (!draftRestored) return;
+    const draft = { client, amount, description, dueDate, tokenId };
+    if (client || amount || description || dueDate) {
+      setSafeSessionStorageItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } else {
+      removeSafeSessionStorageItem(DRAFT_STORAGE_KEY);
+    }
+  }, [draftRestored, client, amount, description, dueDate, tokenId]);
   const [submitting, setSubmitting] = useState(false);
   const [preview, setPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
-  const [customTemplates, setCustomTemplates] = useState<InvoiceTemplate[]>(() =>
-    loadCustomTemplates()
+  const [customTemplates, setCustomTemplates] = useState<InvoiceTemplate[]>(
+    () => loadCustomTemplates(),
   );
   const [templateName, setTemplateName] = useState("");
-  const [tokenId, setTokenId] = useState(config.tokenId);
-  const [availableTokens, setAvailableTokens] = useState(() => tokens);
+  const [savedClients, setSavedClients] = useState<SavedClient[]>([]);
+  const [saveClientAfterCreate, setSaveClientAfterCreate] = useState(false);
+  const [clientNickname, setClientNickname] = useState("");
+  const [manageClients, setManageClients] = useState(false);
+  const [editingAddress, setEditingAddress] = useState<string | null>(null);
+  const [editingNickname, setEditingNickname] = useState("");
   const token = useTokenMeta(tokenId);
 
   const configured = isConfigured();
+
+  useEffect(() => setSavedClients(loadSavedClients()), []);
 
   useEffect(() => {
     let active = true;
@@ -76,12 +159,30 @@ export default function CreatePage() {
     // Issue #66: an empty due date is fine; a date before today is not.
     const dueErr = dueDateError(dueDate);
     if (dueErr) return dueErr;
+    if (saveClientAfterCreate && !clientNickname.trim()) {
+      return "Enter a nickname for this saved client.";
+    }
     return null;
+  }
+
+  function chooseClient(value: string) {
+    const savedClient = savedClients.find(
+      (saved) =>
+        saved.nickname.toLocaleLowerCase() === value.trim().toLocaleLowerCase(),
+    );
+    setClient(savedClient?.address ?? value.trim());
+    if (savedClient) setClientNickname(savedClient.nickname);
+  }
+
+  function renameClient(addressToRename: string) {
+    setSavedClients(renameSavedClient(addressToRename, editingNickname));
+    setEditingAddress(null);
+    setEditingNickname("");
   }
 
   function applyTemplate(id: string) {
     const template = [...BUILTIN_TEMPLATES, ...customTemplates].find(
-      (t) => t.id === id
+      (t) => t.id === id,
     );
     if (!template) return;
     setDescription(template.description);
@@ -118,7 +219,7 @@ export default function CreatePage() {
             paidAt: 0n,
           }
         : null,
-    [client, amount, description, dueDate, address, tokenId, token.decimals]
+    [client, amount, description, dueDate, address, tokenId, token.decimals],
   );
 
   function openPreview() {
@@ -161,12 +262,21 @@ export default function CreatePage() {
         token: tokenId,
       });
       setResult(res);
+      trackEvent("invoice_created");
+      if (saveClientAfterCreate) {
+        setSavedClients(
+          saveClient({ nickname: clientNickname, address: client }),
+        );
+      }
       setClient("");
       setAmount("");
       setDescription("");
       setDueDate("");
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to create invoice.");
+      setSaveClientAfterCreate(false);
+      setClientNickname("");
+      removeSafeSessionStorageItem(DRAFT_STORAGE_KEY);
+    } catch (e) {
+      setError(errorMessage(e, "Failed to create invoice."));
     } finally {
       setSubmitting(false);
     }
@@ -213,18 +323,7 @@ export default function CreatePage() {
       {error && <Alert kind="error">{error}</Alert>}
 
       {!address ? (
-        <div className="card flex flex-col items-center gap-4 py-10 text-center">
-          <p className="text-slate-300">
-            Connect your wallet to create an invoice.
-          </p>
-          <button
-            onClick={connect}
-            disabled={connecting}
-            className="btn-primary"
-          >
-            {connecting ? "Connecting…" : "Connect wallet"}
-          </button>
-        </div>
+        <ConnectPrompt message="Connect your wallet to create an invoice." />
       ) : (
         <form
           onSubmit={(e) => {
@@ -242,7 +341,9 @@ export default function CreatePage() {
                 id="template"
                 className="input flex-1"
                 value=""
-                onChange={(e) => e.target.value && applyTemplate(e.target.value)}
+                onChange={(e) =>
+                  e.target.value && applyTemplate(e.target.value)
+                }
               >
                 <option value="">Choose a template…</option>
                 <optgroup label="Built-in">
@@ -269,6 +370,8 @@ export default function CreatePage() {
                   value={templateName}
                   onChange={(e) => setTemplateName(e.target.value)}
                   onKeyDown={(e) => {
+                    // Enter here saves the template; it must not submit the
+                    // invoice form (which would open a signing request).
                     if (e.key === "Enter") {
                       e.preventDefault();
                       saveTemplate();
@@ -289,7 +392,10 @@ export default function CreatePage() {
             {customTemplates.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {customTemplates.map((t) => (
-                  <span key={t.id} className="badge bg-brand-500/15 text-brand-200">
+                  <span
+                    key={t.id}
+                    className="badge bg-brand-500/15 text-brand-200"
+                  >
                     {t.name}
                     <button
                       type="button"
@@ -306,23 +412,128 @@ export default function CreatePage() {
               </div>
             )}
             <p className="mt-1.5 text-xs text-slate-500">
-              Templates prefill the description and amount. Your saved
-              templates stay in this browser.
+              Templates prefill the description and amount. Your saved templates
+              stay in this browser.
             </p>
           </div>
 
           <div>
-            <label className="label" htmlFor="client">
-              Client wallet address
-            </label>
+            <div className="flex items-center justify-between gap-3">
+              <label className="label" htmlFor="client">
+                Client wallet address
+              </label>
+              {savedClients.length > 0 && (
+                <button
+                  type="button"
+                  className="text-xs text-brand-200 underline"
+                  aria-expanded={manageClients}
+                  onClick={() => setManageClients((open) => !open)}
+                >
+                  {manageClients ? "Done" : "Manage clients"}
+                </button>
+              )}
+            </div>
             <input
               id="client"
               className="input font-mono text-xs"
               placeholder="GABC…"
               value={client}
-              onChange={(e) => setClient(e.target.value.trim())}
+              onChange={(e) => chooseClient(e.target.value)}
               autoComplete="off"
+              list="saved-clients"
             />
+            <datalist id="saved-clients">
+              {savedClients.map((saved) => (
+                <option
+                  key={saved.address}
+                  value={saved.nickname}
+                  label={saved.address}
+                />
+              ))}
+            </datalist>
+            {manageClients && (
+              <ul className="mt-2 space-y-2">
+                {savedClients.map((saved) => (
+                  <li
+                    key={saved.address}
+                    className="flex flex-wrap items-center gap-2 text-xs"
+                  >
+                    {editingAddress === saved.address ? (
+                      <>
+                        <input
+                          className="input min-w-0 flex-1"
+                          aria-label={`Rename ${saved.nickname}`}
+                          value={editingNickname}
+                          maxLength={40}
+                          onChange={(e) => setEditingNickname(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="text-brand-200 underline"
+                          onClick={() => renameClient(saved.address)}
+                          disabled={!editingNickname.trim()}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          className="text-slate-400 underline"
+                          onClick={() => setEditingAddress(null)}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium">{saved.nickname}</span>
+                        <span className="min-w-0 flex-1 truncate font-mono text-slate-500">
+                          {saved.address}
+                        </span>
+                        <button
+                          type="button"
+                          className="text-brand-200 underline"
+                          onClick={() => {
+                            setEditingAddress(saved.address);
+                            setEditingNickname(saved.nickname);
+                          }}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          className="text-red-300 underline"
+                          onClick={() =>
+                            setSavedClients(deleteSavedClient(saved.address))
+                          }
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-3 space-y-2">
+              <label className="flex items-center gap-2 text-xs text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={saveClientAfterCreate}
+                  onChange={(e) => setSaveClientAfterCreate(e.target.checked)}
+                />
+                Save this client after creating the invoice
+              </label>
+              {saveClientAfterCreate && (
+                <input
+                  className="input"
+                  placeholder="Client nickname"
+                  value={clientNickname}
+                  onChange={(e) => setClientNickname(e.target.value)}
+                  maxLength={40}
+                  aria-label="Saved client nickname"
+                />
+              )}
+            </div>
           </div>
 
           {availableTokens.length > 1 && (
@@ -343,8 +554,8 @@ export default function CreatePage() {
                 ))}
               </select>
               <p className="mt-1 text-xs text-slate-500">
-                Only tokens allowed by the contract can be selected. This
-                choice is fixed once the invoice is created.
+                Only tokens allowed by the contract can be selected. This choice
+                is fixed once the invoice is created.
               </p>
             </div>
           )}
@@ -392,7 +603,11 @@ export default function CreatePage() {
               aria-describedby={dueDateError(dueDate) ? "due-error" : undefined}
             />
             {dueDateError(dueDate) && (
-              <p id="due-error" role="alert" className="mt-1 text-xs text-red-300">
+              <p
+                id="due-error"
+                role="alert"
+                className="mt-1 text-xs text-red-300"
+              >
                 {dueDateError(dueDate)}
               </p>
             )}

@@ -1,4 +1,4 @@
-import { config } from "./config";
+import { config } from "./config.ts";
 
 // Token amounts are integers in "stroops" of the token (7 decimals for USDC).
 // The UI works in human units; convert at the boundary.
@@ -35,6 +35,14 @@ export function formatAmount(
   const [whole, frac] = human.split(".");
   const withCommas = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return frac ? `${withCommas}.${frac}` : withCommas;
+}
+
+export function formatNaira(amount: number): string {
+  if (!Number.isFinite(amount)) return "₦0.00";
+  return new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+  }).format(amount);
 }
 
 export function shortAddress(addr: string, chars = 4): string {

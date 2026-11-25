@@ -20,7 +20,7 @@ const DATE_INPUT = /^\d{4}-\d{2}-\d{2}$/;
  */
 export function dueDateError(
   value: string,
-  today: string = todayDateInputValue()
+  today: string = todayDateInputValue(),
 ): string | null {
   if (!value) return null;
   if (!DATE_INPUT.test(value)) return "Enter a valid due date.";
@@ -35,7 +35,10 @@ export function dueDateError(
  * a meaningful filename (issue #67): `PayLoop-Invoice-<id>`, or
  * `PayLoop-Receipt-<id>` once the invoice is paid.
  */
-export function invoicePrintTitle(invoice: { id: string; status: string }): string {
+export function invoicePrintTitle(invoice: {
+  id: string;
+  status: string;
+}): string {
   // The id lands in a filename: keep it to filename-safe characters. A not-yet
   // created invoice (preview) has the placeholder id "—", which is dropped.
   const id = String(invoice.id).replace(/[^A-Za-z0-9_-]/g, "");
@@ -46,9 +49,13 @@ export function invoicePrintTitle(invoice: { id: string; status: string }): stri
 /** True when `address` is the invoice's freelancer, and not also its client (issue #69). */
 export function isInvoiceOwner(
   address: string | null | undefined,
-  invoice: { freelancer: string; client: string }
+  invoice: { freelancer: string; client: string },
 ): boolean {
-  return Boolean(address) && address === invoice.freelancer && address !== invoice.client;
+  return (
+    Boolean(address) &&
+    address === invoice.freelancer &&
+    address !== invoice.client
+  );
 }
 
 /** Plain-text reminder a freelancer can paste to their client. */
@@ -61,4 +68,41 @@ export function buildReminderMessage(args: {
   return `Hi! You have an outstanding PayLoop invoice #${args.id} for ${args.amountLabel} (${
     args.description || "no description"
   }). Please pay it here: ${args.url}`;
+}
+
+/** URL for creating a new invoice with the same client and work details. */
+export function buildCreateInvoiceUrl(args: {
+  client: string;
+  amount: string;
+  description: string;
+}): string {
+  const params = new URLSearchParams(args);
+  return `/create?${params.toString()}`;
+}
+
+/**
+ * True when an invoice is still Pending and its due date has passed (issue #70).
+ * Shared by every screen so the Overdue badge and the dashboard count agree.
+ * Paid invoices and invoices without a due date (`dueDate === 0n`) never are.
+ * `dueDate` is a unix timestamp in seconds; `nowMs` is a millisecond clock.
+ */
+export function isOverdue(
+  invoice: { status: string; dueDate: bigint },
+  nowMs: number = Date.now(),
+): boolean {
+  return (
+    invoice.status === "Pending" &&
+    invoice.dueDate > 0n &&
+    invoice.dueDate * 1000n < BigInt(Math.floor(nowMs))
+  );
+}
+
+
+const U64_MAX = 18446744073709551615n;
+
+// True when `id` is a canonical invoice id: digits only and at most u64::MAX
+// (issue #59). Anything else cannot exist on-chain, so callers should treat it
+// as "not found" without making an RPC call.
+export function isValidInvoiceId(id: string): boolean {
+  return /^\d+$/.test(id) && BigInt(id) <= U64_MAX;
 }

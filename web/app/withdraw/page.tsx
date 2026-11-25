@@ -2,20 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { useWallet } from "@/components/WalletProvider";
+import { ConnectPrompt } from "@/components/ConnectPrompt";
 import { Alert, Spinner } from "@/components/ui";
 import { getTokenBalance } from "@/lib/contract";
-import { formatAmount, fromBaseUnits } from "@/lib/format";
-import { config } from "@/lib/config";
+import { formatAmount, formatNaira, fromBaseUnits } from "@/lib/format";
+import { bankByCode } from "@/lib/banks";
+import { BankSelect } from "@/components/BankSelect";
+import { config, NGN_PER_USDC } from "@/lib/config";
 
 // Mocked USDC -> Naira off-ramp. A production build would hand off to a licensed
 // anchor over SEP-24; here we simulate the anchor UX end-to-end so the payout
 // story is complete for the demo. No real funds move.
-const NGN_PER_USDC = 1560;
 
 type Stage = "form" | "processing" | "done";
 
 export default function WithdrawPage() {
-  const { address, connect, connecting } = useWallet();
+  const { address } = useWallet();
   const [balance, setBalance] = useState<bigint | null>(null);
   const [amount, setAmount] = useState("");
   const [bank, setBank] = useState("");
@@ -25,10 +27,14 @@ export default function WithdrawPage() {
   const [ref, setRef] = useState("");
 
   useEffect(() => {
-    if (address) getTokenBalance(address).then(setBalance).catch(() => {});
+    if (address)
+      getTokenBalance(address)
+        .then(setBalance)
+        .catch(() => {});
   }, [address]);
 
   const naira = amount ? Number(amount) * NGN_PER_USDC : 0;
+  const bankName = bankByCode(bank)?.name ?? "";
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -74,12 +80,7 @@ export default function WithdrawPage() {
       </Alert>
 
       {!address ? (
-        <div className="card flex flex-col items-center gap-4 py-10 text-center">
-          <p className="text-slate-300">Connect your wallet to withdraw.</p>
-          <button onClick={connect} disabled={connecting} className="btn-primary">
-            {connecting ? "Connecting…" : "Connect wallet"}
-          </button>
-        </div>
+        <ConnectPrompt message="Connect your wallet to withdraw." />
       ) : stage === "done" ? (
         <div className="card space-y-4 text-center">
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-500/15 text-3xl">
@@ -88,8 +89,8 @@ export default function WithdrawPage() {
           <div>
             <p className="text-xl font-bold">Withdrawal initiated</p>
             <p className="mt-1 text-sm text-slate-400">
-              ₦{naira.toLocaleString()} is on its way to your{" "}
-              {bank} account ending {accountNo.slice(-4)}.
+              ₦{naira.toLocaleString()} is on its way to your {bank} account
+              ending {accountNo.slice(-4)}.
             </p>
           </div>
           <div className="rounded-lg bg-ink-900/60 p-3 text-sm">
@@ -119,9 +120,19 @@ export default function WithdrawPage() {
           </div>
 
           <div>
-            <label className="label" htmlFor="amt">
-              Amount ({config.tokenSymbol})
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="label" htmlFor="amt">
+                Amount ({config.tokenSymbol})
+              </label>
+              <button
+                type="button"
+                className="mb-1 text-xs font-medium text-brand-400 hover:text-brand-300 disabled:text-slate-600"
+                disabled={balance === null || stage === "processing"}
+                onClick={() => balance !== null && setAmount(fromBaseUnits(balance))}
+              >
+                Max
+              </button>
+            </div>
             <input
               id="amt"
               className="input"
@@ -135,10 +146,10 @@ export default function WithdrawPage() {
               <p className="mt-1.5 text-sm text-slate-400">
                 You&apos;ll receive ≈{" "}
                 <span className="font-semibold text-slate-200">
-                  ₦{naira.toLocaleString()}
+                  {formatNaira(naira)}
                 </span>{" "}
                 <span className="text-slate-500">
-                  (₦{NGN_PER_USDC.toLocaleString()}/{config.tokenSymbol})
+                  ({formatNaira(NGN_PER_USDC)}/{config.tokenSymbol})
                 </span>
               </p>
             )}
@@ -148,21 +159,12 @@ export default function WithdrawPage() {
             <label className="label" htmlFor="bank">
               Bank
             </label>
-            <select
+            <BankSelect
               id="bank"
-              className="input"
               value={bank}
-              onChange={(e) => setBank(e.target.value)}
+              onChange={setBank}
               disabled={stage === "processing"}
-            >
-              <option value="">Select bank…</option>
-              <option>Access Bank</option>
-              <option>GTBank</option>
-              <option>Kuda</option>
-              <option>Opay</option>
-              <option>UBA</option>
-              <option>Zenith Bank</option>
-            </select>
+            />
           </div>
 
           <div>

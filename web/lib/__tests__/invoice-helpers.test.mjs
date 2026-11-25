@@ -1,12 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildCreateInvoiceUrl,
   buildReminderMessage,
   dueDateError,
   invoicePrintTitle,
   isInvoiceOwner,
+  isOverdue,
+  isValidInvoiceId,
   todayDateInputValue,
 } from "../invoice-helpers.ts";
+
+test("duplicate invoice URLs encode client, amount and description", () => {
+  assert.equal(
+    buildCreateInvoiceUrl({
+      client: "GCLIENT",
+      amount: "100.5",
+      description: "Design & build",
+    }),
+    "/create?client=GCLIENT&amount=100.5&description=Design+%26+build"
+  );
+});
 
 // ── #66 due date ────────────────────────────────────────────────────────────
 
@@ -88,4 +102,45 @@ test("reminder message includes id, amount, description and link", () => {
     buildReminderMessage({ id: "7", amountLabel: "1 USDC", description: "", url: "u" }),
     /\(no description\)/
   );
+});
+
+// ── #70 overdue ─────────────────────────────────────────────────────────────
+
+const NOW_MS = Date.UTC(2026, 10, 22, 12, 0, 0);
+const NOW_S = BigInt(Math.floor(NOW_MS / 1000));
+
+test("a Pending invoice past its due date is overdue", () => {
+  assert.equal(isOverdue({ status: "Pending", dueDate: NOW_S - 1n }, NOW_MS), true);
+  assert.equal(isOverdue({ status: "Pending", dueDate: NOW_S - 86_400n }, NOW_MS), true);
+});
+
+test("a Pending invoice due now or later is not overdue", () => {
+  assert.equal(isOverdue({ status: "Pending", dueDate: NOW_S }, NOW_MS), false);
+  assert.equal(isOverdue({ status: "Pending", dueDate: NOW_S + 1n }, NOW_MS), false);
+});
+
+test("a Paid invoice is never overdue", () => {
+  assert.equal(isOverdue({ status: "Paid", dueDate: NOW_S - 86_400n }, NOW_MS), false);
+});
+
+test("an invoice with no due date is never overdue", () => {
+  assert.equal(isOverdue({ status: "Pending", dueDate: 0n }, NOW_MS), false);
+});
+
+test("isOverdue defaults to the current clock", () => {
+  assert.equal(isOverdue({ status: "Pending", dueDate: 1n }), true);
+  assert.equal(isOverdue({ status: "Pending", dueDate: 99_999_999_999n }), false);
+});
+
+
+test("isValidInvoiceId accepts digit-only ids up to u64::MAX", () => {
+  assert.equal(isValidInvoiceId("1"), true);
+  assert.equal(isValidInvoiceId("0"), true);
+  assert.equal(isValidInvoiceId("18446744073709551615"), true);
+});
+
+test("isValidInvoiceId rejects non-numeric, negative, decimal and oversized ids", () => {
+  for (const id of ["", "abc", "1.5", "-1", "+1", " 1", "1e3", "0x10", "18446744073709551616", "99999999999999999999999"]) {
+    assert.equal(isValidInvoiceId(id), false, id);
+  }
 });

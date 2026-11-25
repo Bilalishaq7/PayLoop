@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { connectWallet, detectWallet } from "@/lib/wallet";
+import { errorMessage } from "@/lib/async-resource";
 
 type WalletContextValue = {
   address: string | null;
@@ -16,6 +17,7 @@ type WalletContextValue = {
   installed: boolean;
   connecting: boolean;
   error: string | null;
+  clearError: () => void;
   connect: () => Promise<void>;
   disconnect: () => void;
 };
@@ -58,9 +60,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setNetwork(state.network);
       setInstalled(true);
       localStorage.setItem(STORAGE_KEY, "1");
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to connect wallet.");
-      if (String(e?.message).toLowerCase().includes("not found")) {
+    } catch (e) {
+      const message = errorMessage(e, "Failed to connect wallet.");
+      setError(message);
+      if (message.toLowerCase().includes("not found")) {
         setInstalled(false);
       }
     } finally {
@@ -68,9 +71,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
   const disconnect = useCallback(() => {
     setAddress(null);
     setNetwork(null);
+    setError(null);
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 
@@ -81,10 +89,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       installed,
       connecting,
       error,
+      clearError,
       connect,
       disconnect,
     }),
-    [address, network, installed, connecting, error, connect, disconnect]
+    [
+      address,
+      network,
+      installed,
+      connecting,
+      error,
+      clearError,
+      connect,
+      disconnect,
+    ],
   );
 
   return (

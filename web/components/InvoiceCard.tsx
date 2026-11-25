@@ -3,10 +3,19 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { Invoice } from "@/lib/contract";
-import { formatAmount, formatDate, humanizeDescription, shortAddress } from "@/lib/format";
+import {
+  formatAmount,
+  formatDate,
+  fromBaseUnits,
+  humanizeDescription,
+} from "@/lib/format";
 import { useTokenMeta } from "@/lib/use-token-meta";
-import { StatusBadge } from "./ui";
+import { StatusBadge, OverdueBadge } from "./ui";
+import { AddressChip } from "./AddressChip";
+import { isOverdue } from "@/lib/invoice-helpers";
 import { InvoicePreview } from "./InvoiceDocument";
+import { ShareMenu } from "./ShareMenu";
+import { buildCreateInvoiceUrl } from "@/lib/invoice-helpers";
 
 export function InvoiceCard({
   invoice,
@@ -16,7 +25,6 @@ export function InvoiceCard({
   role: "freelancer" | "client";
 }) {
   const [copied, setCopied] = useState(false);
-  const [reminded, setReminded] = useState(false);
   const [preview, setPreview] = useState(false);
   const token = useTokenMeta(invoice.token);
 
@@ -37,22 +45,7 @@ export function InvoiceCard({
     }
   }
 
-  async function copyReminder() {
-    const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
-      invoice.amount,
-      token.decimals
-    )} ${token.symbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${link()}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setReminded(true);
-      setTimeout(() => setReminded(false), 2000);
-    } catch {
-      window.location.href = link();
-    }
-  }
-
-  const overdue =
-    invoice.status === "Pending" && invoice.dueDate > 0n && invoice.dueDate * 1000n < BigInt(Date.now());
+  const overdue = isOverdue(invoice);
 
   return (
     <div className="card space-y-3">
@@ -60,11 +53,7 @@ export function InvoiceCard({
         <div>
           <p className="text-sm text-slate-400">
             Invoice #{invoice.id}
-            {overdue && (
-              <span className="badge ml-2 bg-red-500/15 text-red-300">
-                Overdue
-              </span>
-            )}
+            {overdue && <OverdueBadge className="ml-2" />}
           </p>
           <p className="text-2xl font-bold">
             {formatAmount(invoice.amount, token.decimals)}{" "}
@@ -85,10 +74,12 @@ export function InvoiceCard({
           <dt className="text-slate-500">
             {role === "freelancer" ? "Client" : "Freelancer"}
           </dt>
-          <dd className="font-mono">
-            {shortAddress(
-              role === "freelancer" ? invoice.client : invoice.freelancer
-            )}
+          <dd>
+            <AddressChip
+              address={
+                role === "freelancer" ? invoice.client : invoice.freelancer
+              }
+            />
           </dd>
         </div>
         <div>
@@ -114,9 +105,7 @@ export function InvoiceCard({
           <button onClick={copyLink} className="btn-ghost flex-1 text-sm">
             {copied ? "Link copied ✓" : "Copy payment link"}
           </button>
-          <button onClick={copyReminder} className="btn-ghost text-sm" title="Copy a payment reminder message">
-            {reminded ? "Copied ✓" : "Remind"}
-          </button>
+          <ShareMenu invoice={invoice} buttonClassName="btn-ghost text-sm" />
           <Link
             href={`/pay/${invoice.id}`}
             className="btn-ghost text-sm"
@@ -124,11 +113,29 @@ export function InvoiceCard({
           >
             Open
           </Link>
-          <button onClick={() => setPreview(true)} className="btn-ghost text-sm" title="Preview / save as PDF">
+          <button
+            onClick={() => setPreview(true)}
+            className="btn-ghost text-sm"
+            title="Preview / save as PDF"
+          >
             PDF
           </button>
         </div>
       )}
+
+      <div>
+        <Link
+          href={buildCreateInvoiceUrl({
+            client: invoice.client,
+            amount: fromBaseUnits(invoice.amount, token.decimals),
+            description: invoice.description,
+          })}
+          className="btn-ghost text-sm"
+          title="Create a similar invoice"
+        >
+          Duplicate
+        </Link>
+      </div>
 
       <InvoicePreview
         invoice={invoice}

@@ -1,52 +1,53 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
-import { InvoiceCard } from "@/components/InvoiceCard";
+import { ConnectPrompt } from "@/components/ConnectPrompt";
+import { DashboardInvoiceList } from "@/components/DashboardInvoiceList";
+import { IncomeOverview } from "@/components/IncomeOverview";
+import { ShareMenu } from "@/components/ShareMenu";
 import { Alert, EmptyState, Spinner } from "@/components/ui";
-import { getInvoiceHistory, getTokenBalance, type Invoice } from "@/lib/contract";
-import { formatAmount, humanizeDescription } from "@/lib/format";
+import {
+  getInvoiceHistory,
+  getTokenBalance,
+  type Invoice,
+} from "@/lib/contract";
 import { isConfigured, tokens } from "@/lib/config";
 import { FaucetButton } from "@/components/FaucetButton";
 import { TrustlineButton } from "@/components/TrustlineButton";
 import { TokenAmount } from "@/components/TokenAmount";
-import { useTokenMeta } from "@/lib/use-token-meta";
+import { isOverdue } from "@/lib/invoice-helpers";
+import { useAsyncResource } from "@/lib/use-async-resource";
+
+const NO_INVOICES: Invoice[] = [];
+const NO_BALANCES: Record<string, bigint> = {};
 
 export default function DashboardPage() {
-  const { address, connect, connecting } = useWallet();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [balances, setBalances] = useState<Record<string, bigint>>({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!address) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const hist = await getInvoiceHistory(address);
+  const { address } = useWallet();
+  const {
+    data,
+    loading,
+    error,
+    reload: load,
+  } = useAsyncResource(
+    async () => {
+      const hist = await getInvoiceHistory(address as string);
       const bals = await Promise.all(
-        tokens.map((t) => getTokenBalance(address, t.id).catch(() => null))
+        tokens.map((t) => getTokenBalance(address as string, t.id).catch(() => null)),
       );
-      // Newest first.
-      setInvoices([...hist].reverse());
       const next: Record<string, bigint> = {};
       tokens.forEach((t, i) => {
         const value = bals[i];
         if (value !== null) next[t.id] = value;
       });
-      setBalances(next);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load your invoices.");
-    } finally {
-      setLoading(false);
-    }
-  }, [address]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      // Newest first.
+      return { invoices: [...hist].reverse(), balances: next };
+    },
+    [address],
+    { enabled: Boolean(address), fallbackError: "Failed to load your invoices." },
+  );
+  const invoices = data?.invoices ?? NO_INVOICES;
+  const balances = data?.balances ?? NO_BALANCES;
 
   if (!isConfigured()) {
     return (
@@ -59,25 +60,19 @@ export default function DashboardPage() {
 
   if (!address) {
     return (
-      <div className="card flex flex-col items-center gap-4 py-14 text-center">
-        <h1 className="text-xl font-bold">Your dashboard</h1>
-        <p className="text-slate-400">
-          Connect your wallet to see your invoices and balance.
-        </p>
-        <button onClick={connect} disabled={connecting} className="btn-primary">
-          {connecting ? "Connecting…" : "Connect wallet"}
-        </button>
-      </div>
+      <ConnectPrompt
+        title="Your dashboard"
+        message="Connect your wallet to see your invoices and balance."
+        className="py-14"
+        messageClassName="text-slate-400"
+      />
     );
   }
 
   const paidTotals = totalsByToken(invoices, "Paid");
   const pendingTotals = totalsByToken(invoices, "Pending");
   const pending = invoices.filter((i) => i.status === "Pending");
-  const nowMs = Date.now();
-  const overdue = pending.filter(
-    (i) => i.dueDate > 0n && i.dueDate * 1000n < BigInt(nowMs)
-  );
+  const overdue = pending.filter((i) => isOverdue(i));
 
   return (
     <div className="space-y-6">
@@ -96,7 +91,9 @@ export default function DashboardPage() {
           <p className="text-sm text-slate-400">Wallet balance</p>
           {tokens.map((t) => (
             <p key={t.id} className="mt-1 text-2xl font-bold">
-              {balances[t.id] === undefined ? "—" : (
+              {balances[t.id] === undefined ? (
+                "—"
+              ) : (
                 <TokenAmount
                   amount={balances[t.id] ?? 0n}
                   tokenId={t.id}
@@ -115,6 +112,8 @@ export default function DashboardPage() {
           <TokenTotals totals={pendingTotals} tone="text-amber-300" />
         </div>
       </div>
+
+      <IncomeOverview invoices={invoices} />
 
       {error && (
         <Alert kind="error">
@@ -135,11 +134,7 @@ export default function DashboardPage() {
 
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Your invoices</h2>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="btn-ghost text-xs"
-        >
+        <button onClick={load} disabled={loading} className="btn-ghost text-xs">
           {loading ? <Spinner /> : "Refresh"}
         </button>
       </div>
@@ -166,18 +161,13 @@ export default function DashboardPage() {
           }
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {invoices.map((inv) => (
-            <InvoiceCard key={inv.id} invoice={inv} role="freelancer" />
-          ))}
-        </div>
+        <DashboardInvoiceList invoices={invoices} />
       )}
     </div>
   );
 }
 
-// Quick-action card for unpaid invoices: one click copies a reminder message
-// per pending invoice (Level-4 feedback: "payment reminders").
+// Totals are kept per token so invoices in different tokens never get mixed.
 function totalsByToken(invoices: Invoice[], status: Invoice["status"]) {
   const totals = new Map<string, bigint>();
   for (const inv of invoices) {
@@ -208,6 +198,7 @@ function TokenTotals({
   );
 }
 
+// Quick-action card for unpaid invoices: share/copy reminder messages from one menu.
 function RemindersCard({
   pending,
   overdueCount,
@@ -233,42 +224,17 @@ function RemindersCard({
       </div>
       <div className="flex flex-wrap gap-2">
         {pending.map((inv) => (
-          <RemindButton key={inv.id} invoice={inv} />
+          <ShareMenu
+            key={inv.id}
+            invoice={inv}
+            align="left"
+            buttonClassName="btn-ghost text-xs"
+            label={`Remind #${inv.id}`}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function RemindButton({ invoice }: { invoice: Invoice }) {
-  const [copied, setCopied] = useState(false);
-  const token = useTokenMeta(invoice.token);
 
-  async function remind() {
-    const url =
-      typeof window !== "undefined"
-        ? `${window.location.origin}/pay/${invoice.id}`
-        : `/pay/${invoice.id}`;
-    const text = `Hi! You have an outstanding PayLoop invoice #${invoice.id} for ${formatAmount(
-      invoice.amount,
-      token.decimals
-    )} ${token.symbol} (${humanizeDescription(invoice.description) || "no description"}). Please pay it here: ${url}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      window.location.href = url;
-    }
-  }
-
-  return (
-    <button
-      onClick={remind}
-      className="btn-ghost text-xs"
-      title="Copy a reminder message to send to your client"
-    >
-      {copied ? "Copied ✓" : `Remind #${invoice.id}`}
-    </button>
-  );
-}

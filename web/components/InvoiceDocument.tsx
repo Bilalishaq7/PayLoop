@@ -24,7 +24,6 @@ export function InvoiceDocument({
   txHash,
 }: {
   invoice: Invoice;
-  /** Settlement transaction hash, when known (it is not stored on the invoice itself). */
   txHash?: string;
 }) {
   const token = useTokenMeta(invoice.token);
