@@ -65,8 +65,9 @@ the issue before public disclosure.
 
 ## Notes for reviewers of this contract
 
-- The contract is deliberately minimal: single initializer, no admin functions
-  after `initialize`, fixed payment token, two-state invoice lifecycle.
+- The contract is deliberately minimal: single initializer (the constructor,
+  run atomically with deployment), no admin functions after deployment,
+  fixed payment token, two-state invoice lifecycle.
   Security-relevant properties (who can create, who must authorize funding,
   double-payment rejection, balance pre-check) are defined in
   [contracts/invoice/README.md](contracts/invoice/README.md#entrypoints) and

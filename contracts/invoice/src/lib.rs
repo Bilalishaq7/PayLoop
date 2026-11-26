@@ -44,7 +44,6 @@ pub struct Invoice {
 #[repr(u32)]
 pub enum Error {
     NotInitialized = 1,
-    AlreadyInitialized = 2,
     InvoiceNotFound = 3,
     AlreadyPaid = 4,
     InvalidAmount = 5,
@@ -99,20 +98,26 @@ pub struct InvoiceContract;
 
 #[contractimpl]
 impl InvoiceContract {
-    /// One-time setup. `payment_token` is the default token (test USDC SAC on
-    /// testnet) used when an invoice does not specify its own token, and it is
-    /// the first entry in the allowlist.
+    /// Runs once, atomically with deployment. The deployer supplies the admin
+    /// and the payment token as constructor arguments, so there is no window
+    /// between deployment and setup where anyone else could initialize the
+    /// instance with their own admin and token and take it over.
+    ///
+    /// No authorization is checked here on purpose: the constructor runs
+    /// inside the deployment transaction itself, so only the deployer can
+    /// provide the arguments. `payment_token` is the default token (test USDC
+    /// SAC on testnet) used when an invoice does not specify its own token,
+    /// and it is the first entry in the allowlist.
     ///
     /// Deliberate design decisions: the admin has **no post-initialization
     /// power** (no rotation, no pausing, no recovery), and the default token is
     /// immutable after init — a redeploy is the intended upgrade path. The only
     /// admin action added for multi-token support is growing the token
     /// allowlist; tokens can never be removed from an existing instance.
-    pub fn initialize(env: Env, admin: Address, payment_token: Address) -> Result<(), Error> {
-        if env.storage().instance().has(&DataKey::Admin) {
-            return Err(Error::AlreadyInitialized);
-        }
-        admin.require_auth();
+    ///
+    /// This replaces the old separate `initialize` entrypoint, which was a
+    /// second transaction after deployment and could be front-run.
+    pub fn __constructor(env: Env, admin: Address, payment_token: Address) {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
@@ -123,7 +128,6 @@ impl InvoiceContract {
             .instance()
             .set(&DataKey::AllowedTokens, &allowed);
         env.storage().instance().set(&DataKey::NextId, &1u64);
-        Ok(())
     }
 
     /// Adds a token contract to the allowlist so invoices can be raised in it.
@@ -131,7 +135,8 @@ impl InvoiceContract {
     /// so no previously created invoice can become unfundable.
     ///
     /// # Errors
-    /// `NotInitialized` when called before `initialize`.
+    /// `NotInitialized` when the contract state is missing (cannot happen on
+    /// a deployed instance: construction runs with deployment).
     pub fn add_allowed_token(env: Env, admin: Address, token: Address) -> Result<(), Error> {
         admin.require_auth();
         let mut allowed = Self::allowed_tokens(&env)?;
@@ -370,7 +375,7 @@ impl InvoiceContract {
     /// funds movement**. It exists so a future held-escrow model can reuse the
     /// entrypoint name without an interface break. Callers that depend on it
     /// doing anything today are integrating the wrong contract version; a
-    /// future redeploy with milestone escrow must re-initialize a new contract
+    /// future redeploy with milestone escrow must deploy a new contract
     /// instance.
     pub fn release_funds(env: Env, invoice_id: u64) -> Result<(), Error> {
         let invoice: Invoice = env
