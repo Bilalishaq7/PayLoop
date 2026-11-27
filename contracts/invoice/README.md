@@ -108,6 +108,12 @@ Semantics worth knowing:
   freelancer cannot pay their own invoice this way (`InvalidParties`). This
   supports company treasuries and agencies paying on a client's behalf without
   weakening the default rule.
+- `get_invoice_range` never traps on extreme inputs: `start` and `len` are
+  combined with saturating arithmetic (the release profile enables
+  `overflow-checks` and the wasm target has a 32-bit `usize`), and a single
+  call returns at most **50 invoices** (`MAX_PAGE_SIZE`); a larger `len` is
+  capped, and a `start` past the end returns an empty page. The cap keeps a
+  full page inside Soroban's per-invocation ledger footprint limit.
 
 ## Error codes
 
