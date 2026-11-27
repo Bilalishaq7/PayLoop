@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useWallet } from "./WalletProvider";
 import { Spinner } from "./ui";
 import { errorMessage } from "@/lib/async-resource";
+import { Modal } from "./Modal";
 
 // Message catalogue. Keys are read via t(); missing keys fall back to English.
 // Locale files live in web/messages/<locale>.json once next-intl is wired up.
@@ -90,19 +91,14 @@ export function FeedbackWidget() {
         {t("feedbackButton")}
       </button>
 
-      {open && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("sendFeedbackLabel")}
-          onClick={reset}
-        >
-          <div
-            className="card w-full max-w-md space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
+      <Modal
+        open={open}
+        onClose={reset}
+        label={t("sendFeedbackLabel")}
+        backdropClassName="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
+        panelClassName="card w-full max-w-md space-y-4"
+      >
+        <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold">{t("shareFeedbackTitle")}</h2>
               <button
                 onClick={reset}
@@ -191,11 +187,9 @@ export function FeedbackWidget() {
                     t("sendFeedbackLabel")
                   )}
                 </button>
-              </form>
-            )}
-          </div>
-        </div>
-      )}
+          </form>
+        )}
+      </Modal>
     </>
   );
 }

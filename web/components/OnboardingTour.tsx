@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { Modal } from "./Modal";
 
 // First-run guided tour + replayable walkthrough (navbar "?"). Opens
 // automatically once per browser, and can be reopened anytime via the
@@ -76,8 +77,6 @@ export function OnboardingTour() {
     }
   }
 
-  if (!open) return null;
-
   const s = steps[step];
   const isLast = step === steps.length - 1;
   const title = t(`tour.steps.${s.key}.title`);
@@ -85,18 +84,13 @@ export function OnboardingTour() {
   const cta = s.hasCta ? t(`tour.steps.${s.key}.cta`) : null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("tour.dialogLabel")}
-      onClick={close}
+    <Modal
+      open={open}
+      onClose={close}
+      label={t("tour.dialogLabel")}
+      panelClassName="card w-full max-w-md space-y-4"
     >
-      <div
-        className="card w-full max-w-md space-y-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between">
           <span className="badge bg-brand-500/15 text-brand-200">
             {t("tour.stepOf", { step: step + 1, total: steps.length })}
           </span>
@@ -160,7 +154,6 @@ export function OnboardingTour() {
             {cta} →
           </Link>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
