@@ -230,6 +230,39 @@ export function isConfigured(): boolean {
 // Mock exchange rate used for demonstration off-ramp conversions
 export const NGN_PER_USDC = 1560;
 
+// Supported UI locales. English is the source of truth; other locales fall back
+// to English for any missing message key. See the contributor guide for adding one.
+export const SUPPORTED_LOCALES = ["en", "fr"] as const;
+export type Locale = (typeof SUPPORTED_LOCALES)[number];
+export const DEFAULT_LOCALE: Locale = "en";
+
+// Cookie used to persist the user's chosen locale across visits.
+export const LOCALE_COOKIE = "payloop_locale";
+
+// Human-readable names for the language switcher, keyed by locale code.
+export const localeLabels: Record<Locale, string> = {
+  en: "English",
+  fr: "Français",
+};
+
+export function isSupportedLocale(value: unknown): value is Locale {
+  return (
+    typeof value === "string" &&
+    (SUPPORTED_LOCALES as readonly string[]).includes(value)
+  );
+}
+
+// Normalise an arbitrary value (e.g. a cookie or query param) to a supported locale.
+export function resolveLocale(value: unknown): Locale {
+  return isSupportedLocale(value) ? value : DEFAULT_LOCALE;
+}
+
+// Missing keys in a non-default locale fall back to English. English is the
+// only fallback target, so every locale resolves its fallback to DEFAULT_LOCALE.
+export function getMessageFallbackLocale(_locale: Locale): Locale {
+  return DEFAULT_LOCALE;
+}
+
 // stellar.expert explorer helpers for building clickable proof links.
 const explorerBase =
   config.network === "PUBLIC"
