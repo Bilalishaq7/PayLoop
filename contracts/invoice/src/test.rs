@@ -68,6 +68,8 @@ use soroban_sdk::{
     testutils::{MockAuth, MockAuthInvoke},
     IntoVal,
 };
+extern crate alloc;
+use alloc::string::ToString;
 
 /// Deploys a token (Stellar Asset Contract) we control, mints `amount` to
 /// `to`, and returns the token address plus its admin client for minting.
@@ -1557,4 +1559,23 @@ fn test_history_reads_scale_with_invoice_count() {
         last_cpu = metrics.cpu;
         last_mem = metrics.mem;
     }
+}
+
+#[test]
+fn version_reports_the_current_semantic_version() {
+    let s = setup();
+    // The version is a semantic version, major_minor_patch, per the policy
+    // in contracts/invoice/README.md. The old "v1" value is gone.
+    assert_eq!(s.contract.version(), Symbol::new(&s.env, "1_1_0"));
+    assert_ne!(s.contract.version(), Symbol::new(&s.env, "v1"));
+}
+
+#[test]
+fn version_is_a_semantic_version() {
+    let s = setup();
+    let v = s.contract.version().to_string();
+    // Three numeric parts separated by two underscores. Dots are not
+    // allowed in a Soroban Symbol, so underscores stand in for them.
+    assert_eq!(v.split('_').count(), 3);
+    assert!(v.chars().all(|c| c.is_ascii_digit() || c == '_'));
 }

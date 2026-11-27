@@ -80,7 +80,7 @@ require a fresh deployment to use.
 | `get_client_history` | read-only | `client` | `Vec<Invoice>` | — |
 | `default_token_address` | read-only | — | token `Address` | — |
 | `get_allowed_tokens` | read-only | — | `Vec<Address>` | — |
-| `version` | read-only | — | `"v1"` symbol | — |
+| `version` | read-only | — | `"1_1_0"` symbol (1.1.0) | — |
 
 Semantics worth knowing:
 
@@ -114,6 +114,39 @@ Semantics worth knowing:
   call returns at most **50 invoices** (`MAX_PAGE_SIZE`); a larger `len` is
   capped, and a `start` past the end returns an empty page. The cap keeps a
   full page inside Soroban's per-invocation ledger footprint limit.
+
+## Versioning policy
+
+`version()` returns the contract interface version as a semantic version
+symbol, `major_minor_patch`. Integrators read it to know which functions
+and error codes exist on a deployed instance.
+
+Soroban Symbols only allow `[A-Za-z0-9_]`, so the dots of a semantic
+version are written as underscores: the symbol `1_1_0` means version
+1.1.0. The return type stays a Symbol on purpose, switching it to a
+String would break every caller that reads the version.
+
+- **Major** goes up when the interface breaks: an entrypoint is removed or
+  renamed, an argument or return type changes, or an error code is removed
+  or renumbered. Existing error codes are never renumbered.
+- **Minor** goes up when the interface grows without breaking anything: a
+  new entrypoint or a new error code is added. Error codes are appended,
+  never inserted, so earlier codes keep their numbers.
+- **Patch** goes up when nothing in the interface changes: bug fixes and
+  internal changes only.
+
+The old `version()` value `"v1"` was the first release, so under this
+scheme it is 1.0.0. The interface has since gained entrypoints (for
+example `create_invoice_with_token` and `get_allowed_tokens`, which v1
+deployments do not have) and error codes 6-9, all backward-compatible
+additions, so the current version is **1_1_0** (1.1.0).
+
+There is no in-place upgrade: a version bump ships with a fresh deployment.
+The live testnet instance still runs the old WASM and reports `"v1"` until
+the next redeploy. Every deployment records the version it ships in
+`contracts/deployment.testnet.json` (`contractVersion`), which must match
+what `version()` returns on the deployed instance. The deploy walkthrough
+updates it in step 4.
 
 ## Error codes
 
