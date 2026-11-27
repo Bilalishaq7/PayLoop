@@ -99,6 +99,11 @@ Semantics worth knowing:
 - `due_date` is informational (rendered in UIs, used for overdue badges); the
   contract does not enforce it. There is no expiry: an overdue invoice can
   still be paid so late payments are not locked out.
+- Double funding is impossible: a second `fund_invoice` on a `Paid` invoice
+  returns `AlreadyPaid`.
+- Only the client named on the invoice can fund it: `fund_invoice` requires
+  `invoice.client`'s auth and transfers from `invoice.client`'s balance, so a
+  third party cannot pay on the client's behalf.
 - Double funding is impossible: a second `fund_invoice` (or
   `fund_invoice_as_payer`) on a `Paid` invoice returns `AlreadyPaid`.
 - Default rule: `fund_invoice` requires the named client's own authorization.
